@@ -61,6 +61,31 @@ uv run mofang run --provider openai --model <model> --solver rubik \
   --benchmark <bench3x3.json> --out <report.json>
 ```
 
+## 本地 API
+
+```bash
+uv run mofang serve --port 8000
+curl -s http://127.0.0.1:8000/api/benchmarks
+```
+
+Provider 的 `api_key_ref` 是环境变量名；启动服务前导出该变量：
+
+```bash
+export OPENAI_API_KEY=...
+uv run mofang serve
+```
+
+启动 run 后通过 SSE 观察事件：
+
+```bash
+curl -N http://127.0.0.1:8000/api/runs/<id>/events
+```
+
+主要端点：`/api/providers`、`/api/benchmarks`、`/api/runs`（含
+`snapshot`、`events`、`cancel`、`report`、`export`）、`/api/episodes`、
+`/api/compare`。默认 DB 为 `data/mofang.db`，2x2 距离表为
+`data/cache/2x2_distances.pkl`，可用 `--db` / `--table` 覆盖。
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有

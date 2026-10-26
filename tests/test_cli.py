@@ -38,3 +38,14 @@ def test_fake_run_end_to_end(tmp_path: Path) -> None:
     assert report_path.exists()
     text = report_path.read_text(encoding="utf-8")
     assert '"solve_rate": 1.0' in text
+
+
+def test_serve_parser_defaults() -> None:
+    from mofang.cli import build_parser
+
+    args = build_parser().parse_args(["serve"])
+    assert args.command == "serve"
+    assert args.host == "127.0.0.1"
+    assert args.port == 8000
+    assert args.db == "data/mofang.db"
+    assert args.table == "data/cache/2x2_distances.pkl"

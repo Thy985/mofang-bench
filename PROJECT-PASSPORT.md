@@ -1,9 +1,9 @@
 # PROJECT-PASSPORT — mofang
 
-- 项目：魔方模型能力测试台（后端核心 + CLI）
+- 项目：魔方模型能力测试台（后端 + 本地 API）
 - 目录：`D:\Projects\Archive\mofang`
 - 更新：2026-10-26
-- 阶段：Plan 1（M0–M1）实施中
+- 阶段：Plan 1（M0–M1）与 Plan 2（M2 API 工作台）本地完成，待 M3 Web UI
 
 ## 环境事实（来源：D:\Company\state\CURRENT-STATE.md，2026-09-18；2026-10-26 定点复核）
 
@@ -21,7 +21,7 @@
 ## 依赖与作用域
 
 - Project 级依赖：全部装进项目 `.venv`，不装全局。
-- 主依赖：`httpx`、`pydantic`。
+- 主依赖：`httpx`、`pydantic`、`fastapi`、`uvicorn`。
 - 开发依赖：`pytest`、`pytest-asyncio`、`hypothesis`、`respx`。
 - 可选求解依赖：`RubikTwoPhase>=1.1.1`（GPLv3+），仅 3x3 worker 子进程导入。
 - 不需要 Company/User 级新能力；若后续需要浏览器 E2E，Playwright 已 active。
@@ -57,8 +57,9 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 
 ## 端口
 
-- Plan 1：无服务端口。
-- Plan 2：FastAPI `127.0.0.1:8000`，Vite `127.0.0.1:5173`。
+- Plan 1：CLI，无服务端口。
+- M2：FastAPI `127.0.0.1:8000`（`uv run mofang serve`）；DB 默认 `data/mofang.db`。
+- M3：Vite `127.0.0.1:5173`（CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`）。
 
 ## 模型接入
 
@@ -78,4 +79,5 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 
 - 完整 2x2 距离表构建较慢、占用内存较高；测试使用浅档部分表。
 - 3x3 首次建表约 30 分钟 / 80MB，且需要 `--extra solver`。
-- 多模态、Web UI、SQLite/SSE 属于 Plan 2。
+- 多模态、3x3 精确最优、多 trial / pass@k、React/three.js Web UI（M3）尚未实现。
+- 同一 run 内 episode 串行；跨 run 由 `RunService` 的锁串行，长跑会排队。

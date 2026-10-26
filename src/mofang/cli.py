@@ -155,7 +155,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     report = sub.add_parser("report", help="print a saved report summary")
     report.add_argument("--report", required=True)
+
+    serve = sub.add_parser("serve", help="run the local API server")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--db", default="data/mofang.db")
+    serve.add_argument("--table", default="data/cache/2x2_distances.pkl")
     return parser
+
+
+def _serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .api.app import create_app
+    from .api.settings import Settings
+
+    settings = Settings(
+        db_path=Path(args.db),
+        table_path=Path(args.table),
+        host=args.host,
+        port=args.port,
+    )
+    uvicorn.run(create_app(settings), host=args.host, port=args.port)
+    return 0
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -206,6 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         report = json.loads(Path(args.report).read_text(encoding="utf-8"))
         print(json.dumps(report["totals"], ensure_ascii=False, indent=2))
         return 0
+    if args.command == "serve":
+        return _serve(args)
     parser.error("unknown command")
     return 2
 
