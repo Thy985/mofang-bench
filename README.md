@@ -25,6 +25,9 @@ uv run python scripts/build_3x3_tables.py   # 首次约 30 分钟 / 80MB
 uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_distances.pkl
 ```
 
+完整表按整体旋转归一化，恰好 3,674,160 个状态、最大距离 11；未归一化会膨胀到
+88,179,840。测试与演示可先用 `--max-depth 3` 的浅表。
+
 ## 运行假 provider（验证链路）
 
 ```bash
