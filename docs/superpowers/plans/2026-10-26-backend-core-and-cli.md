@@ -386,6 +386,8 @@ git commit -m "feat: 魔方颜色与状态 JSON"
 
 ### Task 2: 面转几何引擎、走法解析与逆操作
 
+> **实测修正（2026-10-26）**：首版 `sticker_geometry` 把 row 0 映射到 `-up`，导致 U/F/D/L/B 的转向与标准 Singmaster/Kociemba 约定相反（仅 R 偶然一致），3x3 求解器因此报 "Some edges are undefined"。已改为 row 0 沿 `+up`，并用 RubikTwoPhase 六面转动生成的 54 字符面片串作为基准新增回归测试；2x2 距离表因状态键变化已重新生成。
+
 **Files:**
 - Create: `src/mofang/cube/geometry.py`
 - Create: `src/mofang/cube/moves.py`

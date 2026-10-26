@@ -28,6 +28,12 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 完整表按整体旋转归一化，恰好 3,674,160 个状态、最大距离 11；未归一化会膨胀到
 88,179,840。测试与演示可先用 `--max-depth 3` 的浅表。
 
+## 状态格式与走法约定
+
+面序固定 `U R F D L B`；每面矩阵按"从面外看，行从上到下、列从左到右"排列。
+走法为标准 Singmaster：`U/R/F/D/L/B` 顺时针 90°，`'` 逆时针 90°，`2` 为 180°。
+3x3 传给求解器的面片串按 Kociemba 的 URFDLB 顺序导出。
+
 ## 运行假 provider（验证链路）
 
 ```bash
