@@ -164,6 +164,8 @@ git commit -m "chore: 初始化项目骨架与护照"
 
 ### Task 1: 颜色、状态 JSON、解出判定
 
+> **实测修正（2026-10-26）**：`is_solved()` 最初要求每个面的颜色等于初始色向（U=white 等），会把 2x2 因整体转向得到的六面同色局面误判为未解出（如 `L2 R2`）。真实模型冒烟暴露该问题；现改为"每个面各自同色"，与 2x2 距离的整体旋转归一化一致。
+
 **Files:**
 - Create: `src/mofang/cube/__init__.py`（空文件）
 - Create: `src/mofang/cube/colors.py`

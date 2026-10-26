@@ -50,11 +50,11 @@ class CubeState:
         return self.faces[FACE_ORDER.index(name)]
 
     def is_solved(self) -> bool:
-        for name, grid in zip(FACE_ORDER, self.faces):
-            expected = FACE_COLOR[name]
-            if any(color != expected for row in grid for color in row):
-                return False
-        return True
+        # 2x2 无中心块，六面同色即已还原，即使整体色向与初始朝向不同
+        return all(
+            all(color == grid[0][0] for row in grid for color in row)
+            for grid in self.faces
+        )
 
     def key(self) -> str:
         return "".join(

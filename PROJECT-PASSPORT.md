@@ -60,6 +60,14 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 - Plan 1：无服务端口。
 - Plan 2：FastAPI `127.0.0.1:8000`，Vite `127.0.0.1:5173`。
 
+## 模型接入
+
+- 本地 9router：`http://localhost:20128/v1`（需手动启动；API key 必需，只从环境变量读取，不入库）。
+- 已验证可用：`my-combo`（路由到 agnes-3.0-flash）、`ollama/gpt-oss:120b`、`sensenova/glm-5.2`。
+- 网关兼容性：普通 JSON 可能附加 `data: [DONE]`；部分后端必须显式 `stream:false`（adapter 已固定发送）；`sensenova/kimi-k3` 只接受 temperature=1；`agnes1/agnes-2.5-pro` 需实名认证。
+- 真实冒烟（2026-10-26，`ollama/gpt-oss:120b`，2x2 depth 1）：链路与工具调用正常，模型未解出（0/1，10 步预算耗尽）。报告在 `data/reports/real-smoke-gptoss.json`（gitignored）。
+- 温度当前固定为 0（`ModelParams` 默认）；只接受其他温度的模型暂不可用，Plan 2 的 provider 配置需支持覆盖。
+
 ## GPL 边界
 
 - `src/mofang/cube/solver_worker.py` 是唯一允许 `import twophase` 的文件。
