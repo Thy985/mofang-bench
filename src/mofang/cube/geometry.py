@@ -100,3 +100,46 @@ def move_permutation(size: int, face: str, amount: int) -> tuple[int, ...]:
     if any(value < 0 for value in perm) or len(set(perm)) != total:
         raise RuntimeError(f"invalid permutation for {size} {face} {amount}")
     return tuple(perm)
+
+
+@lru_cache(maxsize=None)
+def whole_rotation_permutation(
+    size: int, axis: int, quarter_turns: int = 1
+) -> tuple[int, ...]:
+    total = 6 * size * size
+    perm = [-1] * total
+    for face in FACE_ORDER:
+        for row in range(size):
+            for col in range(size):
+                pos, normal = sticker_geometry(face, row, col, size)
+                new_pos = rotate(pos, axis, quarter_turns)
+                new_normal = rotate(normal, axis, quarter_turns)
+                target_face, target_row, target_col = position_to_sticker(
+                    new_pos, new_normal, size
+                )
+                target = sticker_index(target_face, target_row, target_col, size)
+                source = sticker_index(face, row, col, size)
+                perm[target] = source
+    if any(value < 0 for value in perm) or len(set(perm)) != total:
+        raise RuntimeError(f"invalid whole rotation for {size} axis {axis}")
+    return tuple(perm)
+
+
+@lru_cache(maxsize=None)
+def whole_rotations(size: int) -> tuple[tuple[int, ...], ...]:
+    identity = tuple(range(6 * size * size))
+    bases = [whole_rotation_permutation(size, axis, 1) for axis in (0, 1, 2)]
+    seen = {identity}
+    frontier = [identity]
+    while frontier:
+        new_frontier = []
+        for perm in frontier:
+            for base in bases:
+                composed = tuple(
+                    perm[base[target]] for target in range(len(perm))
+                )
+                if composed not in seen:
+                    seen.add(composed)
+                    new_frontier.append(composed)
+        frontier = new_frontier
+    return tuple(sorted(seen))

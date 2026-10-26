@@ -2,11 +2,15 @@ from pathlib import Path
 
 import pytest
 
+from mofang.cube.geometry import whole_rotations
 from mofang.cube.moves import apply_moves, turn
 from mofang.cube.state import CubeState
 from mofang.cube.table2x2 import (
     Table2x2Solver,
+    _apply_perm,
     build_table,
+    canonical_key_2x2,
+    canonical_key_from_key,
     load_table,
     state_key_2x2,
 )
@@ -40,6 +44,20 @@ def test_solve_returns_optimal_sequence(small_table: dict[bytes, int]) -> None:
 def test_state_key_is_stable() -> None:
     state = CubeState.solved(2)
     assert state_key_2x2(state) == state_key_2x2(state)
+
+
+def test_whole_rotation_group_size() -> None:
+    assert len(whole_rotations(2)) == 24
+    assert len(whole_rotations(3)) == 24
+
+
+def test_canonical_key_is_rotation_invariant() -> None:
+    state = apply_moves(CubeState.solved(2), ["R", "U", "F'"])
+    key = state_key_2x2(state)
+    canonical = canonical_key_2x2(state)
+    for rotation in whole_rotations(2):
+        rotated = _apply_perm(key, rotation)
+        assert canonical_key_from_key(rotated) == canonical
 
 
 @pytest.mark.slow
