@@ -102,6 +102,8 @@ def _live_state(db, events, run: dict, episodes: list[dict]) -> dict | None:
     if steps and steps[-1]["state"]:
         return steps[-1]["state"]
     for event in reversed(events.history(run["id"])):
+        if event.episode_id != last["id"]:
+            continue
         state = _event_state(event)
         if state is not None:
             return state
