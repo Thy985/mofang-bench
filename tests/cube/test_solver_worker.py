@@ -4,7 +4,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-TABLE_FILES = ("phase1_prun", "phase2_prun", "phase2_cornsliceprun")
+import pytest
+
+from mofang.cube.solver_worker import parse_result
+
+TABLE_FILES = ("phase1_prun", "phase2_prun", "phase2_cornsliceprun", "phase2_edgemerge")
 
 
 def _run_worker(cwd: Path, facelets: str = "U" * 54) -> subprocess.CompletedProcess[str]:
@@ -20,6 +24,18 @@ def _run_worker(cwd: Path, facelets: str = "U" * 54) -> subprocess.CompletedProc
         env=env,
         timeout=120,
     )
+
+
+def test_parse_result_normalizes_numbered_moves() -> None:
+    moves, length = parse_result("U1 R2 F3 (6f)")
+    assert moves == ["U", "R2", "F'"]
+    assert length == 3
+
+
+def test_parse_result_empty_and_error() -> None:
+    assert parse_result("") == ([], 0)
+    with pytest.raises(RuntimeError):
+        parse_result("Error: Some edges are undefined.")
 
 
 def test_worker_reports_missing_tables_without_starting_generation(tmp_path: Path) -> None:
