@@ -51,7 +51,7 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 ## 数据目录
 
 - `data/cache/`：求解器距离表缓存（gitignored）。
-- `twophase/`：RubikTwoPhase 首次运行生成的求解表（约 80MB，gitignored）。
+- `twophase/`：RubikTwoPhase 首次运行生成的求解表（约 80MB，gitignored）；库按相对路径 `twophase/` 查找，因此命令需在项目根执行。
 - `data/benchmarks/`：冻结基准题 JSON。
 - `data/reports/`：运行报告 JSON（gitignored）。
 
