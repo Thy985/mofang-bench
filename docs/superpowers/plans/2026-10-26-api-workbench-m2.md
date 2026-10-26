@@ -3558,6 +3558,8 @@ curl -N http://127.0.0.1:8000/api/runs/<run_id>/events
 
 Expected：事件从 `run.started` 到 `run.finished`；报告可读；服务停止后重启，未完成 run 变为 `interrupted`。
 
+> **实测修正（2026-10-26）**：真实网关冒烟发现 `probe_tools()` 未发送 `stream:false`，网关因此返回 SSE 分片，`decode_json` 报 `bad_response`。已在 probe payload 固定 `"stream": false` 并加回归测试 `test_probe_requests_non_streaming`；重启服务后 probe 返回 `{"ok": true, "tool_calling": true}`。其余链路一次通过：事件序列完整，报告 `totals`、CSV/MD 导出、steps（含 `model_message`）与 snapshot 均可读。运行时 DB `data/mofang.db` 已加入 `.gitignore`，不提交测试数据。
+
 - [ ] **Step 5: 提交**
 
 ```bash
