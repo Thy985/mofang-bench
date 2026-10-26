@@ -17,6 +17,8 @@ uv sync --extra dev --extra solver
 uv run python scripts/build_3x3_tables.py   # 首次约 30 分钟 / 80MB
 ```
 
+求解表生成在项目根的 `twophase/`（已 gitignore）。
+
 ## 2x2 距离表
 
 ```bash

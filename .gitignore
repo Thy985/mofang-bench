@@ -6,6 +6,7 @@ __pycache__/
 .env
 data/cache/
 data/reports/
+twophase/
 dist/
 build/
 *.egg-info/

@@ -35,6 +35,8 @@ def aggregate_report(
     return {
         "benchmark_id": benchmark.id,
         "benchmark_hash": benchmark.content_hash,
+        "benchmark_total_tasks": len(benchmark.tasks),
+        "partial": total < len(benchmark.tasks),
         "totals": {
             "tasks": total,
             "solved": solved,
