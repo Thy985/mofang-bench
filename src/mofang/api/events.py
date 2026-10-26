@@ -42,6 +42,10 @@ def parse_last_event_id(value: str | None) -> int:
         return 0
 
 
+def effective_after(last_event_id: str | None, after: int | None) -> int:
+    return max(parse_last_event_id(last_event_id), after or 0)
+
+
 @dataclass
 class _RunChannel:
     history: list[Event] = field(default_factory=list)

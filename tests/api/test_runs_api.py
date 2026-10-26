@@ -102,6 +102,9 @@ def test_run_lifecycle_report_and_export(tmp_path: Path) -> None:
         assert "| task_id |" in md.text
         bad = client.get(f"/api/runs/{run_id}/export?format=xml")
         assert bad.status_code == 400
+        assert client.get(
+            f"/api/runs/{run_id}/events?after=abc"
+        ).status_code == 422
 
 
 def test_sse_replays_and_finishes(tmp_path: Path) -> None:

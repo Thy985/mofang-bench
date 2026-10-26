@@ -2,6 +2,7 @@ import json
 
 from mofang.api.events import (
     RunEventBus,
+    effective_after,
     format_sse,
     parse_last_event_id,
 )
@@ -48,3 +49,10 @@ async def test_stream_replays_and_receives_live_events() -> None:
     ping = await anext(stream)
     assert ping == ": ping\n\n"
     await stream.aclose()
+
+
+def test_effective_after_prefers_larger_value() -> None:
+    assert effective_after("3", 5) == 5
+    assert effective_after("7", 2) == 7
+    assert effective_after(None, None) == 0
+    assert effective_after("bad", 4) == 4

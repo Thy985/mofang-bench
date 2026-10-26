@@ -4,7 +4,7 @@ import csv
 import io
 from dataclasses import asdict
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from ...service.factory import budget_for
@@ -17,7 +17,7 @@ from ...store.runs import (
     get_steps,
     list_runs,
 )
-from ..events import parse_last_event_id
+from ..events import effective_after
 from ..schemas import EpisodeOut, RunCreate, RunOut
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -106,11 +106,12 @@ async def events(
     run_id: str,
     request: Request,
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    after: int = Query(default=0, ge=0),
 ):
     if get_run(request.app.state.db, run_id) is None:
         raise HTTPException(404, "run not found")
     stream = request.app.state.events.stream(
-        run_id, after=parse_last_event_id(last_event_id)
+        run_id, after=effective_after(last_event_id, after)
     )
     return StreamingResponse(
         stream,
