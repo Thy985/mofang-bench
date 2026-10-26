@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -10,7 +11,12 @@ from typing import Any, Callable
 from ..cube.solver import ReferenceSolver
 from ..cube.state import CubeState
 from ..eval.scorer import score_progress
-from ..models.provider import ModelParams, ProviderAdapter, ProviderError
+from ..models.provider import (
+    ModelParams,
+    ModelTurn,
+    ProviderAdapter,
+    ProviderError,
+)
 from ..tasks.models import Task
 from .budget import Budget
 from .context import ContextBuilder, TurnRecord, system_prompt, task_message
@@ -58,6 +64,10 @@ class EpisodeResult:
     steps: list[StepRecord] = field(default_factory=list)
 
 
+class _EpisodeCancelled(Exception):
+    pass
+
+
 class EpisodeRunner:
     MAX_PROTOCOL_ERRORS = 5
     MAX_TOOL_CALLS_PER_TURN = 5
@@ -69,16 +79,62 @@ class EpisodeRunner:
         solver: ReferenceSolver,
         budget: Budget,
         params: ModelParams | None = None,
+        tool_mode: str = "both",
     ) -> None:
+        if tool_mode not in ("both", "turn_only", "batch_only"):
+            raise ValueError(f"invalid tool_mode: {tool_mode}")
         self.provider = provider
         self.solver = solver
         self.budget = budget
         self.params = params or ModelParams()
+        self.tool_mode = tool_mode
+
+    def _tools(self) -> list[dict[str, Any]]:
+        names = {"get_state", "check_solved"}
+        if self.tool_mode in ("both", "turn_only"):
+            names.add("turn")
+        if self.tool_mode in ("both", "batch_only"):
+            names.add("apply_moves")
+        return [
+            tool for tool in TOOLS if tool["function"]["name"] in names
+        ]
+
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        cancel: asyncio.Event | None,
+    ) -> ModelTurn:
+        chat = asyncio.create_task(
+            self.provider.chat(messages, self._tools(), self.params)
+        )
+        if cancel is None:
+            return await asyncio.wait_for(chat, timeout=self.budget.turn_timeout)
+        stop = asyncio.create_task(cancel.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {chat, stop},
+                timeout=self.budget.turn_timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            stop.cancel()
+        if not done:
+            chat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await chat
+            raise asyncio.TimeoutError
+        if stop in done:
+            chat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await chat
+            raise _EpisodeCancelled
+        return chat.result()
 
     async def run(
         self,
         task: Task,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
+        cancel: asyncio.Event | None = None,
     ) -> EpisodeResult:
         started = time.monotonic()
         initial = CubeState.from_json(task.state)
@@ -104,8 +160,13 @@ class EpisodeRunner:
                 emit(kind, payload)
 
         while True:
+            if cancel is not None and cancel.is_set():
+                status = EpisodeStatus.CANCELLED
+                error_message = "cancelled"
+                break
             if time.monotonic() - started > self.budget.max_seconds:
                 status = EpisodeStatus.TIMEOUT
+                error_message = f"episode timeout after {self.budget.max_seconds:g}s"
                 break
             messages = builder.build(
                 executor.state.to_json(), move_history, records, nudge=nudge
@@ -113,10 +174,11 @@ class EpisodeRunner:
             nudge = None
             notify("model.turn.started", {"moves_used": executor.moves_used})
             try:
-                turn = await asyncio.wait_for(
-                    self.provider.chat(messages, TOOLS, self.params),
-                    timeout=self.budget.turn_timeout,
-                )
+                turn = await self._chat(messages, cancel)
+            except _EpisodeCancelled:
+                status = EpisodeStatus.CANCELLED
+                error_message = "cancelled"
+                break
             except asyncio.TimeoutError:
                 status = EpisodeStatus.TIMEOUT
                 error_message = f"turn timeout after {self.budget.turn_timeout:g}s"
@@ -128,6 +190,10 @@ class EpisodeRunner:
                     else EpisodeStatus.PROVIDER_ERROR
                 )
                 error_message = str(exc) or exc.kind
+                break
+            if cancel is not None and cancel.is_set():
+                status = EpisodeStatus.CANCELLED
+                error_message = "cancelled"
                 break
             tokens_in += turn.usage.prompt_tokens
             tokens_out += turn.usage.completion_tokens
@@ -142,6 +208,18 @@ class EpisodeRunner:
                 "role": "assistant",
                 "content": turn.content or "",
             }
+            steps.append(
+                StepRecord(
+                    seq=len(steps),
+                    kind="model_message",
+                    arguments={
+                        "tool_calls": [call.name for call in turn.tool_calls]
+                    },
+                    result={"content": turn.content},
+                    state=executor.state.to_json(),
+                    reference_length_after=self.solver.distance(executor.state),
+                )
+            )
             if turn.tool_calls:
                 calls = turn.tool_calls[: self.MAX_TOOL_CALLS_PER_TURN]
                 overflow = turn.tool_calls[self.MAX_TOOL_CALLS_PER_TURN :]
@@ -160,6 +238,14 @@ class EpisodeRunner:
                 record = TurnRecord(assistant=assistant)
                 records.append(record)
                 for call in calls:
+                    notify(
+                        "tool.call",
+                        {
+                            "call_id": call.id,
+                            "tool": call.name,
+                            "arguments": call.arguments,
+                        },
+                    )
                     outcome = executor.execute(call.name, call.arguments)
                     record.tool_results.append(
                         {
@@ -170,6 +256,15 @@ class EpisodeRunner:
                     )
                     if outcome.applied:
                         move_history.extend(outcome.applied)
+                    notify(
+                        "tool.result",
+                        {
+                            "call_id": call.id,
+                            "tool": call.name,
+                            "ok": outcome.ok,
+                            "payload": outcome.payload,
+                        },
+                    )
                     length_after = self.solver.distance(executor.state)
                     steps.append(
                         StepRecord(
@@ -182,7 +277,16 @@ class EpisodeRunner:
                             reference_length_after=length_after,
                         )
                     )
-                    notify("move.applied", {"payload": outcome.payload})
+                    if outcome.applied:
+                        notify(
+                            "move.applied",
+                            {
+                                "moves": outcome.applied,
+                                "state": executor.state.to_json(),
+                                "moves_used": executor.moves_used,
+                                "solved": executor.state.is_solved(),
+                            },
+                        )
                     if executor.state.is_solved():
                         status = EpisodeStatus.SOLVED
                         break

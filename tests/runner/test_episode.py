@@ -152,3 +152,103 @@ def test_provider_errors_are_classified_and_reported(
     )
     assert result.status == expected
     assert result.error == f"{kind} boom"
+
+
+def test_emits_tool_events_and_move_state(
+    table_solver: Table2x2Solver,
+) -> None:
+    task = make_task(table_solver, ["R"])
+    provider = FakeProvider(
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1", name="apply_moves", arguments={"moves": ["R'"]}
+                    )
+                ]
+            )
+        ]
+    )
+    events: list[tuple[str, dict]] = []
+
+    def emit(kind: str, payload: dict) -> None:
+        events.append((kind, payload))
+
+    result = asyncio.run(
+        EpisodeRunner(
+            provider=provider, solver=table_solver, budget=Budget(max_moves=10)
+        ).run(task, emit=emit)
+    )
+    kinds = [kind for kind, _ in events]
+    assert "tool.call" in kinds
+    assert "tool.result" in kinds
+    move_events = [payload for kind, payload in events if kind == "move.applied"]
+    assert move_events[-1]["moves"] == ["R'"]
+    assert move_events[-1]["state"]["cube"] == "2x2"
+    assert result.status == EpisodeStatus.SOLVED
+    assert any(step.kind == "model_message" for step in result.steps)
+
+
+def test_cancelled_before_first_turn(table_solver: Table2x2Solver) -> None:
+    task = make_task(table_solver, ["R"])
+    provider = FakeProvider([ModelTurn(content="never")])
+    cancel = asyncio.Event()
+    cancel.set()
+    result = asyncio.run(
+        EpisodeRunner(
+            provider=provider, solver=table_solver, budget=Budget(max_moves=10)
+        ).run(task, cancel=cancel)
+    )
+    assert result.status == EpisodeStatus.CANCELLED
+    assert result.error == "cancelled"
+    assert provider.calls == []
+
+
+async def test_cancel_interrupts_inflight_chat(
+    table_solver: Table2x2Solver,
+) -> None:
+    class SlowProvider:
+        async def chat(self, messages, tools, params):
+            await asyncio.sleep(10)
+            raise AssertionError("cancelled chat should not return")
+
+        async def probe_tools(self) -> bool:
+            return True
+
+    task = make_task(table_solver, ["R"])
+    cancel = asyncio.Event()
+    runner = EpisodeRunner(
+        provider=SlowProvider(),
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+    )
+    run_task = asyncio.create_task(runner.run(task, cancel=cancel))
+    await asyncio.sleep(0.05)
+    cancel.set()
+    result = await asyncio.wait_for(run_task, timeout=2)
+    assert result.status == EpisodeStatus.CANCELLED
+    assert result.error == "cancelled"
+
+
+async def test_tool_mode_filters_tools(table_solver: Table2x2Solver) -> None:
+    class RecordingProvider:
+        def __init__(self) -> None:
+            self.tools: list[dict] = []
+
+        async def chat(self, messages, tools, params):
+            self.tools = tools
+            return ModelTurn(content="done")
+
+        async def probe_tools(self) -> bool:
+            return True
+
+    provider = RecordingProvider()
+    task = make_task(table_solver, ["R"])
+    await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+        tool_mode="batch_only",
+    ).run(task)
+    names = {tool["function"]["name"] for tool in provider.tools}
+    assert names == {"apply_moves", "get_state", "check_solved"}
