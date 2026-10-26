@@ -801,9 +801,12 @@ git commit -m "feat: 种子化打乱生成"
 - Produces:
   - `build_table(max_depth=11) -> dict[bytes, int]`
   - `state_key_2x2(state) -> bytes`
+  - `canonical_key_from_key(key, size=2) -> bytes`
   - `Table2x2Solver(table)` with `distance(state) -> int | None`、`solve(state) -> list[str]`、`reference_kind = "exact"`
   - `ReferenceSolver` Protocol
   - `FakeSolver`
+
+> **实测修正（2026-10-26）**：固定面色标签的 BFS 在 depth 7 已达 680 万状态，全空间是 88,179,840，与 spec 的 3,674,160 不符。实际实现改为**按整体旋转归一化**：把白红绿参考角固定到 UFR 且白色朝 U，BFS 每次转移后重新规范化。新增 `whole_rotation_permutation()` / `whole_rotations()` 与 `canonical_key_from_key()`；完整 2x2 表应恰好 3,674,160 状态、最大距离 11。下方 Step 3/4 的固定标签代码仅保留设计意图，执行以实际代码与测试为准。
 
 - [ ] **Step 1: 写失败测试 `tests/cube/test_table2x2.py`**
 
