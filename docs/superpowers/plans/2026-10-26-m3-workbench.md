@@ -307,10 +307,13 @@ from mofang.api.events import (
 在 `tests/api/test_runs_api.py::test_run_lifecycle_report_and_export` 末尾追加：
 
 ```python
-        assert client.get(
-            f"/api/runs/{run_id}/events?after=abc"
-        ).status_code == 422
+        with client.stream(
+            "GET", f"/api/runs/{run_id}/events?after=abc"
+        ) as response:
+            assert response.status_code == 422
 ```
+
+用 `client.stream` 而不是 `client.get`：SSE 端点在参数校验缺失时会持续发心跳、永不结束，`client.get` 会挂住整个测试会话；`stream` 上下文读到 422 响应即结束。
 
 - [ ] **Step 2: 运行确认失败**
 
