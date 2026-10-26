@@ -48,3 +48,20 @@ def test_bad_benchmark_request(tmp_path) -> None:
             json={"name": "x", "cube": "2x2", "depths": [], "per_depth": 1},
         )
         assert response.status_code == 400
+
+
+def test_duplicate_benchmark_returns_conflict(tmp_path) -> None:
+    client = make_client(tmp_path)
+    payload = {
+        "name": "dup",
+        "cube": "2x2",
+        "depths": [1],
+        "per_depth": 1,
+        "seed": 3,
+    }
+    with client:
+        first = client.post("/api/benchmarks", json=payload)
+        assert first.status_code == 201
+        second = client.post("/api/benchmarks", json=payload)
+        assert second.status_code == 409
+        assert second.json()["detail"]["id"] == "dup-2x2-3"

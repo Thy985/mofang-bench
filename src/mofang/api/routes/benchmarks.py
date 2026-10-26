@@ -42,6 +42,12 @@ def create(payload: BenchmarkCreate, request: Request) -> BenchmarkDetail:
         raise HTTPException(400, "2x2 requires table solver")
     if payload.cube == "3x3" and payload.solver != "rubik":
         raise HTTPException(400, "3x3 requires rubik solver")
+    benchmark_id = f"{payload.name}-{payload.cube}-{payload.seed}"
+    if get_benchmark(request.app.state.db, benchmark_id) is not None:
+        raise HTTPException(
+            409,
+            {"message": "benchmark already exists", "id": benchmark_id},
+        )
     solver = None
     try:
         solver = request.app.state.solver_factory(payload.cube)
