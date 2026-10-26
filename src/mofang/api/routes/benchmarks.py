@@ -42,6 +42,9 @@ def create(payload: BenchmarkCreate, request: Request) -> BenchmarkDetail:
         raise HTTPException(400, "2x2 requires table solver")
     if payload.cube == "3x3" and payload.solver != "rubik":
         raise HTTPException(400, "3x3 requires rubik solver")
+    # id 由 name 拼成并被前端当作 URL 路径段使用，含 / # ? 的 id 永远路由不回详情页
+    if any(char in payload.name for char in ("/", "#", "?")):
+        raise HTTPException(400, "name must not contain / # or ?")
     benchmark_id = f"{payload.name}-{payload.cube}-{payload.seed}"
     if get_benchmark(request.app.state.db, benchmark_id) is not None:
         raise HTTPException(

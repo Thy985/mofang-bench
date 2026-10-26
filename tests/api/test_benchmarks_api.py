@@ -65,3 +65,38 @@ def test_duplicate_benchmark_returns_conflict(tmp_path) -> None:
         second = client.post("/api/benchmarks", json=payload)
         assert second.status_code == 409
         assert second.json()["detail"]["id"] == "dup-2x2-3"
+
+
+def test_benchmark_name_with_path_characters_is_rejected(tmp_path) -> None:
+    client = make_client(tmp_path)
+    with client:
+        for char in ("/", "#", "?"):
+            response = client.post(
+                "/api/benchmarks",
+                json={
+                    "name": f"bad{char}name",
+                    "cube": "2x2",
+                    "depths": [1],
+                    "per_depth": 1,
+                    "seed": 3,
+                    "solver": "table",
+                },
+            )
+            assert response.status_code == 400, char
+            assert response.json()["detail"] == "name must not contain / # or ?"
+            # 被拒的名字一条都没落库
+            assert client.get("/api/benchmarks").json() == []
+        # 对照用例：空格、中文、连字符都要放行——连字符本来就出现在每个拼出来的 id 里
+        ok = client.post(
+            "/api/benchmarks",
+            json={
+                "name": "demo 基准-v1",
+                "cube": "2x2",
+                "depths": [1],
+                "per_depth": 1,
+                "seed": 3,
+                "solver": "table",
+            },
+        )
+        assert ok.status_code == 201
+        assert ok.json()["id"] == "demo 基准-v1-2x2-3"
