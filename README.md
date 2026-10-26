@@ -44,11 +44,11 @@ uv run mofang run --provider openai --model <model> --base-url <url> \
 
 报告包含逐题状态、步数、效率、协议错误、tokens 与耗时。
 
-3x3 需要先构建求解表，并显式放宽预算：
+3x3 使用 `--solver rubik`，预算自动按 3x3 默认值（100 步 / 15 分钟 /
+150 次调用 / 1M tokens），可用 `--max-*` 覆盖：
 
 ```bash
 uv run mofang run --provider openai --model <model> --solver rubik \
-  --max-moves 100 --max-tool-calls 150 --max-seconds 900 --max-tokens 1000000 \
   --benchmark <bench3x3.json> --out <report.json>
 ```
 
