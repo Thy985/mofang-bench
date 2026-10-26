@@ -154,9 +154,11 @@ class Settings:
 
 - [ ] **Step 4: 安装依赖并跑测试**
 
-Run: `uv sync --extra dev` 然后 `uv run pytest tests/api/test_settings.py -q`
+Run: `uv sync --extra dev --extra solver` 然后 `uv run pytest tests/api/test_settings.py -q`
 
 Expected: `2 passed`
+
+（必须带 `--extra solver`：`uv sync` 会移除未声明的 extra，否则 3x3 GPL worker 会失效。）
 
 - [ ] **Step 5: 提交**
 
