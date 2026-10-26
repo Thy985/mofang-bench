@@ -280,6 +280,58 @@ def test_snapshot_falls_back_to_task_state(tmp_path: Path) -> None:
         assert response.json()["current_state"] == state.to_json()
 
 
+def test_snapshot_uses_tool_result_payload_state(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap-tool.db")
+    task_state = apply_moves(CubeState.solved(2), ["R"])
+    live_state = apply_moves(CubeState.solved(2), ["F"])
+    benchmark = Benchmark(
+        id="snap-bench-tool",
+        name="snap-tool",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=task_state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        episode_id = create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        app.state.events.publish(
+            run_id,
+            "tool.result",
+            {
+                "tool": "get_state",
+                "ok": True,
+                "payload": {"state": live_state.to_json()},
+            },
+            episode_id=episode_id,
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.json()["current_state"] == live_state.to_json()
+
+
 def test_snapshot_ignores_other_episodes_events(tmp_path: Path) -> None:
     db = Database(tmp_path / "snap-scope.db")
     task_state = apply_moves(CubeState.solved(2), ["R"])
