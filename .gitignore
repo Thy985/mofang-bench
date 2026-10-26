@@ -11,3 +11,4 @@ twophase/
 dist/
 build/
 *.egg-info/
+.superpowers/
