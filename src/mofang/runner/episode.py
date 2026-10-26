@@ -54,6 +54,7 @@ class EpisodeResult:
     latency_ms: int
     final_state: dict[str, Any]
     failure_code: str | None
+    error: str | None = None
     steps: list[StepRecord] = field(default_factory=list)
 
 
@@ -94,6 +95,7 @@ class EpisodeRunner:
         tokens_out = 0
         nudges = 0
         status = EpisodeStatus.STOPPED_UNSOLVED
+        error_message: str | None = None
         start_length = self.solver.distance(initial) or task.reference_length
         nudge: str | None = None
 
@@ -117,9 +119,15 @@ class EpisodeRunner:
                 )
             except asyncio.TimeoutError:
                 status = EpisodeStatus.TIMEOUT
+                error_message = f"turn timeout after {self.budget.turn_timeout:g}s"
                 break
-            except ProviderError:
-                status = EpisodeStatus.PROVIDER_ERROR
+            except ProviderError as exc:
+                status = (
+                    EpisodeStatus.TIMEOUT
+                    if exc.kind == "timeout"
+                    else EpisodeStatus.PROVIDER_ERROR
+                )
+                error_message = str(exc) or exc.kind
                 break
             tokens_in += turn.usage.prompt_tokens
             tokens_out += turn.usage.completion_tokens
@@ -240,6 +248,7 @@ class EpisodeRunner:
             latency_ms=int((time.monotonic() - started) * 1000),
             final_state=final_state.to_json(),
             failure_code=failure_code,
+            error=error_message,
             steps=steps,
         )
         notify("episode.finished", {"status": status.value, "solved": result.solved})

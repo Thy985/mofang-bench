@@ -5,10 +5,23 @@ import pytest
 from mofang.cube.moves import apply_moves, invert_moves
 from mofang.cube.state import CubeState
 from mofang.cube.table2x2 import Table2x2Solver, build_table
-from mofang.models.provider import FakeProvider, ModelTurn, ToolCall
+from mofang.models.provider import (
+    FakeProvider,
+    ModelTurn,
+    ProviderError,
+    ToolCall,
+)
 from mofang.runner.budget import Budget
 from mofang.runner.episode import EpisodeRunner, EpisodeStatus
 from mofang.tasks.models import Task
+
+
+class RaisingProvider:
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+    async def chat(self, messages, tools, params):
+        raise ProviderError(self.kind, f"{self.kind} boom")
 
 
 @pytest.fixture(scope="module")
@@ -93,3 +106,22 @@ def test_budget_exceeded(table_solver: Table2x2Solver) -> None:
     )
     assert result.status == EpisodeStatus.BUDGET_EXCEEDED
     assert result.moves_used == 2
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [("timeout", EpisodeStatus.TIMEOUT), ("auth", EpisodeStatus.PROVIDER_ERROR)],
+)
+def test_provider_errors_are_classified_and_reported(
+    kind: str, expected: EpisodeStatus, table_solver: Table2x2Solver
+) -> None:
+    task = make_task(table_solver, ["R"])
+    result = asyncio.run(
+        EpisodeRunner(
+            provider=RaisingProvider(kind),
+            solver=table_solver,
+            budget=Budget(max_moves=10),
+        ).run(task)
+    )
+    assert result.status == expected
+    assert result.error == f"{kind} boom"

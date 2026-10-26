@@ -1,4 +1,27 @@
-from mofang.runner.context import ContextBuilder, TurnRecord, task_message
+from mofang.runner.context import (
+    PROMPT_VERSION,
+    ContextBuilder,
+    TurnRecord,
+    system_prompt,
+    task_message,
+)
+
+
+def test_system_prompt_covers_required_guidance() -> None:
+    text = system_prompt()
+    assert PROMPT_VERSION == "v1"
+    for needle in (
+        "状态格式",
+        "U R F D L B",
+        "turn",
+        "apply_moves",
+        "get_state",
+        "check_solved",
+        "预算",
+        "外部求解器",
+        "同一状态",
+    ):
+        assert needle in text
 
 
 def test_first_message_is_bounded() -> None:

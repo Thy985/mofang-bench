@@ -58,6 +58,7 @@ def aggregate_report(
                 "tokens_out": result.tokens_out,
                 "latency_ms": result.latency_ms,
                 "failure_code": result.failure_code,
+                "error": result.error,
             }
             for task, result in zip(benchmark.tasks, results)
         ],
