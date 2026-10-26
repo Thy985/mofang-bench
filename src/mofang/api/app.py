@@ -4,8 +4,10 @@ import os
 from contextlib import asynccontextmanager
 from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..cube.solver import ReferenceSolver
 from ..models.provider import ProviderAdapter
@@ -62,4 +64,24 @@ def create_app(
     app.include_router(runs.router)
     app.include_router(episodes.router)
     app.include_router(compare.router)
+
+    web_dir = resolved.web_dir
+    if web_dir is not None and (web_dir / "index.html").is_file():
+        assets = web_dir / "assets"
+        if assets.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+        root = web_dir.resolve()
+        index = root / "index.html"
+
+        # catch-all 必须晚于 API 路由注册，否则会遮住接口路径
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def spa(full_path: str):
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(404, "not found")
+            candidate = (root / full_path).resolve()
+            # 百分号编码的 ../ 会原样到达这里，必须确认仍在 web_dir 内
+            if candidate.is_relative_to(root) and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(index)
     return app

@@ -49,3 +49,4 @@ def test_serve_parser_defaults() -> None:
     assert args.port == 8000
     assert args.db == "data/mofang.db"
     assert args.table == "data/cache/2x2_distances.pkl"
+    assert args.web_dir == "frontend/dist"

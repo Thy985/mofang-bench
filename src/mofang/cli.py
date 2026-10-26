@@ -161,6 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--db", default="data/mofang.db")
     serve.add_argument("--table", default="data/cache/2x2_distances.pkl")
+    serve.add_argument("--web-dir", default="frontend/dist")
     return parser
 
 
@@ -173,6 +174,7 @@ def _serve(args: argparse.Namespace) -> int:
     settings = Settings(
         db_path=Path(args.db),
         table_path=Path(args.table),
+        web_dir=Path(args.web_dir) if args.web_dir else None,
         host=args.host,
         port=args.port,
     )
