@@ -1,6 +1,6 @@
 {
-  "id": "demo-2x2-7",
-  "name": "demo",
+  "id": "demo-2x2-2x2-7",
+  "name": "demo-2x2",
   "version": "v1",
   "cube": "2x2",
   "kind": "frozen",
@@ -17,12 +17,12 @@
         "faces": {
           "U": [
             [
-              "orange",
-              "orange"
-            ],
-            [
               "white",
               "white"
+            ],
+            [
+              "orange",
+              "orange"
             ]
           ],
           "R": [
@@ -47,12 +47,12 @@
           ],
           "D": [
             [
-              "yellow",
-              "yellow"
-            ],
-            [
               "red",
               "red"
+            ],
+            [
+              "yellow",
+              "yellow"
             ]
           ],
           "L": [
@@ -103,22 +103,22 @@
           ],
           "R": [
             [
-              "blue",
-              "blue"
-            ],
-            [
               "red",
               "red"
+            ],
+            [
+              "blue",
+              "blue"
             ]
           ],
           "F": [
             [
-              "red",
-              "red"
-            ],
-            [
               "green",
               "green"
+            ],
+            [
+              "red",
+              "red"
             ]
           ],
           "D": [
@@ -133,22 +133,22 @@
           ],
           "L": [
             [
-              "green",
-              "green"
-            ],
-            [
               "orange",
               "orange"
+            ],
+            [
+              "green",
+              "green"
             ]
           ],
           "B": [
             [
-              "orange",
-              "orange"
-            ],
-            [
               "blue",
               "blue"
+            ],
+            [
+              "orange",
+              "orange"
             ]
           ]
         }
@@ -170,52 +170,52 @@
         "faces": {
           "U": [
             [
-              "white",
-              "white"
-            ],
-            [
               "blue",
               "red"
+            ],
+            [
+              "white",
+              "white"
             ]
           ],
           "R": [
             [
-              "red",
+              "blue",
               "yellow"
             ],
             [
-              "blue",
+              "red",
               "yellow"
             ]
           ],
           "F": [
             [
-              "green",
-              "green"
-            ],
-            [
               "red",
               "red"
+            ],
+            [
+              "green",
+              "green"
             ]
           ],
           "D": [
             [
-              "green",
-              "orange"
-            ],
-            [
               "yellow",
               "yellow"
+            ],
+            [
+              "green",
+              "orange"
             ]
           ],
           "L": [
             [
               "white",
-              "orange"
+              "green"
             ],
             [
               "white",
-              "green"
+              "orange"
             ]
           ],
           "B": [
@@ -257,52 +257,52 @@
           ],
           "R": [
             [
-              "yellow",
-              "red"
-            ],
-            [
               "green",
               "green"
+            ],
+            [
+              "yellow",
+              "red"
             ]
           ],
           "F": [
             [
-              "green",
-              "green"
-            ],
-            [
               "orange",
               "white"
+            ],
+            [
+              "green",
+              "green"
             ]
           ],
           "D": [
             [
-              "yellow",
-              "yellow"
-            ],
-            [
               "orange",
               "orange"
+            ],
+            [
+              "yellow",
+              "yellow"
             ]
           ],
           "L": [
             [
-              "orange",
-              "white"
-            ],
-            [
               "blue",
               "blue"
+            ],
+            [
+              "orange",
+              "white"
             ]
           ],
           "B": [
             [
-              "blue",
-              "blue"
-            ],
-            [
               "yellow",
               "red"
+            ],
+            [
+              "blue",
+              "blue"
             ]
           ]
         }
@@ -325,41 +325,41 @@
         "faces": {
           "U": [
             [
-              "yellow",
+              "blue",
               "white"
             ],
             [
-              "blue",
+              "yellow",
               "white"
             ]
           ],
           "R": [
             [
-              "red",
-              "red"
-            ],
-            [
               "orange",
               "orange"
+            ],
+            [
+              "red",
+              "red"
             ]
           ],
           "F": [
             [
               "green",
-              "yellow"
+              "blue"
             ],
             [
               "green",
-              "blue"
+              "yellow"
             ]
           ],
           "D": [
             [
-              "green",
+              "white",
               "blue"
             ],
             [
-              "white",
+              "green",
               "blue"
             ]
           ],
@@ -375,11 +375,11 @@
           ],
           "B": [
             [
-              "white",
+              "green",
               "yellow"
             ],
             [
-              "green",
+              "white",
               "yellow"
             ]
           ]
@@ -403,62 +403,62 @@
         "faces": {
           "U": [
             [
-              "blue",
-              "white"
-            ],
-            [
               "yellow",
               "green"
+            ],
+            [
+              "blue",
+              "white"
             ]
           ],
           "R": [
             [
-              "red",
-              "orange"
-            ],
-            [
               "green",
               "yellow"
+            ],
+            [
+              "red",
+              "orange"
             ]
           ],
           "F": [
             [
-              "green",
-              "yellow"
-            ],
-            [
               "red",
               "orange"
+            ],
+            [
+              "green",
+              "yellow"
             ]
           ],
           "D": [
             [
-              "green",
-              "white"
-            ],
-            [
               "yellow",
               "blue"
+            ],
+            [
+              "green",
+              "white"
             ]
           ],
           "L": [
             [
-              "red",
-              "orange"
-            ],
-            [
               "blue",
               "white"
+            ],
+            [
+              "red",
+              "orange"
             ]
           ],
           "B": [
             [
-              "blue",
-              "white"
-            ],
-            [
               "red",
               "orange"
+            ],
+            [
+              "blue",
+              "white"
             ]
           ]
         }
@@ -468,6 +468,6 @@
       "bin": "3"
     }
   ],
-  "content_hash": "e0162f577d59dbb60ebd664b161ec377d82bd7360d2db29e7f0054154191ac5d",
-  "created_at": "2026-10-26T03:16:24.298400+00:00"
+  "content_hash": "1ba359a23db0418319ae3fcdf736f866d4c7da1883ff3dddf1a0eb7aef752ba2",
+  "created_at": "2026-10-26T03:50:46.702696+00:00"
 }
