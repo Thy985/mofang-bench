@@ -2083,6 +2083,7 @@ export function describeError(err: unknown): string {
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/client'
 import type { Provider } from '../api/types'
 import { ProvidersView } from './ProvidersPage'
 
@@ -2177,8 +2178,105 @@ describe('ProvidersView', () => {
     )
     expect(onCreate).not.toHaveBeenCalled()
   })
+
+  it.each([
+    ['max_tokens 清空', 'max_tokens', '', 'max_tokens 必须是正整数'],
+    ['max_tokens 归零', 'max_tokens', '0', 'max_tokens 必须是正整数'],
+    ['max_tokens 非数字', 'max_tokens', 'abc', 'max_tokens 必须是正整数'],
+    ['temperature 越界', 'temperature', '3', 'temperature 必须是 0 到 2 之间的数值'],
+    ['temperature 非数字', 'temperature', 'abc', 'temperature 必须是 0 到 2 之间的数值'],
+    ['extra 是数组', 'extra', '[1,2]', 'extra 必须是 JSON 对象'],
+    ['extra 是 null', 'extra', 'null', 'extra 必须是 JSON 对象'],
+    ['extra 是裸字符串', 'extra', '"abc"', 'extra 必须是 JSON 对象'],
+    ['extra 是数字', 'extra', '42', 'extra 必须是 JSON 对象'],
+  ])(
+    'rejects %s before sending anything',
+    async (_label, key, value, expected) => {
+      const user = userEvent.setup()
+      const onCreate = vi.fn().mockResolvedValue(undefined)
+      render(
+        <ProvidersView
+          providers={[]}
+          loading={false}
+          error={null}
+          onCreate={onCreate}
+          onProbe={vi.fn()}
+        />,
+      )
+      await user.type(screen.getByLabelText('名称'), 'x')
+      await user.type(screen.getByLabelText('模型'), 'm')
+      const field = screen.getByLabelText(key)
+      await user.clear(field)
+      await user.type(field, value)
+      await user.click(screen.getByRole('button', { name: '保存 provider' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+      expect(onCreate).not.toHaveBeenCalled()
+    },
+  )
+
+  it('maps a backend 400 on create to Chinese plus the detail', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockRejectedValue(
+      new ApiError(400, 'base_url must be http(s)'),
+    )
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+        onProbe={vi.fn()}
+      />,
+    )
+    await user.type(screen.getByLabelText('名称'), 'x')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '请求不合法（HTTP 400）：base_url must be http(s)',
+    )
+  })
+
+  it('unwraps the 502 dict detail when probe fails upstream', async () => {
+    const user = userEvent.setup()
+    const onProbe = vi.fn().mockRejectedValue(
+      new ApiError(502, JSON.stringify({ kind: 'auth', message: '上游拒绝' })),
+    )
+    render(
+      <ProvidersView
+        providers={[provider]}
+        loading={false}
+        error={null}
+        onCreate={vi.fn()}
+        onProbe={onProbe}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '探测' }))
+    const text = await screen.findByText(/上游模型服务不可用/)
+    expect(text.textContent).toContain('上游拒绝')
+    expect(text.textContent).not.toContain('{')
+  })
+
+  it('shows a Chinese network error when the backend is unreachable', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+        onProbe={vi.fn()}
+      />,
+    )
+    await user.type(screen.getByLabelText('名称'), 'x')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/网络错误/)
+  })
 })
 ```
+
+`max_tokens` 走正整数校验、`temperature` 走 0–2 数值校验、`extra` 必须是 JSON 对象——`Number('')` 会变成 0、`JSON.parse('null')` 会得到非对象并一路写进 `params`（后端 `params: dict[str, Any]` 不拦），所以必须在前端拦下。`readPositiveInt` 只是实现内部细节，用例只断言界面上的告警文案与 `onCreate` 未被调用。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -2236,6 +2334,15 @@ export function ProvidersView({
     setForm((current) => ({ ...current, [key]: value }))
   }
 
+  function readPositiveInt(value: string, label: string): number | null {
+    const parsed = Number(value)
+    if (value.trim() === '' || !Number.isInteger(parsed) || parsed < 1) {
+      setFormError(`${label} 必须是正整数`)
+      return null
+    }
+    return parsed
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setFormError(null)
@@ -2246,9 +2353,21 @@ export function ProvidersView({
       setFormError('base_url 必须是 http(s)')
       return
     }
+    const maxTokens = readPositiveInt(form.max_tokens, 'max_tokens')
+    if (maxTokens === null) return
+    const temperature = Number(form.temperature)
+    if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+      setFormError('temperature 必须是 0 到 2 之间的数值')
+      return
+    }
     let extra: Record<string, unknown>
     try {
-      extra = JSON.parse(form.extra || '{}') as Record<string, unknown>
+      const parsed: unknown = JSON.parse(form.extra || '{}')
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setFormError('extra 必须是 JSON 对象')
+        return
+      }
+      extra = parsed as Record<string, unknown>
     } catch {
       setFormError('extra 必须是合法 JSON')
       return
@@ -2261,8 +2380,8 @@ export function ProvidersView({
         model: form.model,
         api_key_ref: form.api_key_ref,
         params: {
-          temperature: Number(form.temperature),
-          max_tokens: Number(form.max_tokens),
+          temperature,
+          max_tokens: maxTokens,
           extra,
         },
       })
@@ -2455,7 +2574,7 @@ export default function ProvidersPage() {
     <ProvidersView
       providers={providers.data ?? []}
       loading={providers.isPending}
-      error={providers.error?.message ?? null}
+      error={providers.error ? describeError(providers.error) : null}
       onCreate={async (payload) => {
         await create.mutateAsync(payload)
       }}
@@ -2483,12 +2602,12 @@ npm run test:run -- src/pages/ProvidersPage.test.tsx
 npm run typecheck
 ```
 
-Expected: 3 passed；类型检查通过。
+Expected: 15 passed（3 条基础用例 + 9 条表单校验 `it.each` + 3 条错误映射）；类型检查通过。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add frontend/src/pages/ProvidersPage.tsx frontend/src/pages/ProvidersPage.test.tsx frontend/src/App.tsx
+git add frontend/src/pages/ProvidersPage.tsx frontend/src/pages/ProvidersPage.test.tsx frontend/src/lib/errors.ts frontend/src/App.tsx
 git commit -m "feat: Providers 页面"
 ```
 
@@ -2864,7 +2983,7 @@ export default function BenchmarksPage() {
     <BenchmarksView
       benchmarks={benchmarks.data ?? []}
       loading={benchmarks.isPending}
-      error={benchmarks.error?.message ?? null}
+      error={benchmarks.error ? describeError(benchmarks.error) : null}
       onCreate={async (payload) => {
         await create.mutateAsync(payload)
       }}
