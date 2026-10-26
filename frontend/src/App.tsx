@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import ProvidersPage from './pages/ProvidersPage'
 
 function Placeholder({ title }: { title: string }) {
   return <h1 className="text-2xl font-semibold">{title}</h1>
@@ -10,7 +11,7 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/runs" replace />} />
-        <Route path="providers" element={<Placeholder title="Providers" />} />
+        <Route path="providers" element={<ProvidersPage />} />
         <Route path="benchmarks" element={<Placeholder title="Benchmarks" />} />
         <Route
           path="benchmarks/:id"

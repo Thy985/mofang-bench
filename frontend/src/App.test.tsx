@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
 beforeEach(() => {
+  // Providers 页挂载即发 GET /api/providers，该 stub 就是它的空列表响应。
   vi.stubGlobal(
     'fetch',
     vi.fn().mockResolvedValue({
@@ -34,6 +35,10 @@ describe('App routes', () => {
     )
     expect(
       screen.getByRole('heading', { name: 'Providers' }),
+    ).toBeInTheDocument()
+    // 占位组件只有标题；断言表单按钮才能证明接的是真实页面
+    expect(
+      screen.getByRole('button', { name: '保存 provider' }),
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument()
   })

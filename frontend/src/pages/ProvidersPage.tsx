@@ -1,0 +1,272 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { api } from '../api/client'
+import { qk, useProviders } from '../api/queries'
+import { describeError } from '../lib/errors'
+import type {
+  ProbeResult,
+  Provider,
+  ProviderCreate,
+} from '../api/types'
+
+const initialForm = {
+  name: '',
+  base_url: 'http://localhost:20128/v1',
+  model: '',
+  api_key_ref: 'OPENAI_API_KEY',
+  temperature: '0',
+  max_tokens: '4096',
+  extra: '{}',
+}
+
+export interface ProvidersViewProps {
+  providers: Provider[]
+  loading: boolean
+  error: string | null
+  onCreate: (payload: ProviderCreate) => Promise<void>
+  onProbe: (id: string) => Promise<ProbeResult>
+}
+
+export function ProvidersView({
+  providers,
+  loading,
+  error,
+  onCreate,
+  onProbe,
+}: ProvidersViewProps) {
+  const [form, setForm] = useState(initialForm)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [probes, setProbes] = useState<Record<string, string>>({})
+
+  function update(key: keyof typeof initialForm, value: string) {
+    setForm((current) => ({ ...current, [key]: value }))
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    if (
+      !form.base_url.startsWith('http://') &&
+      !form.base_url.startsWith('https://')
+    ) {
+      setFormError('base_url 必须是 http(s)')
+      return
+    }
+    let extra: Record<string, unknown>
+    try {
+      extra = JSON.parse(form.extra || '{}') as Record<string, unknown>
+    } catch {
+      setFormError('extra 必须是合法 JSON')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreate({
+        name: form.name,
+        base_url: form.base_url,
+        model: form.model,
+        api_key_ref: form.api_key_ref,
+        params: {
+          temperature: Number(form.temperature),
+          max_tokens: Number(form.max_tokens),
+          extra,
+        },
+      })
+      setForm(initialForm)
+    } catch (err) {
+      setFormError(describeError(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleProbe(id: string) {
+    setProbes((current) => ({ ...current, [id]: '探测中…' }))
+    try {
+      const result = await onProbe(id)
+      setProbes((current) => ({
+        ...current,
+        [id]: result.tool_calling
+          ? '支持 tool calling'
+          : '不支持 tool calling',
+      }))
+    } catch (err) {
+      setProbes((current) => ({
+        ...current,
+        [id]: describeError(err),
+      }))
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Providers</h1>
+      {error && (
+        <p className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300">
+          {error}
+        </p>
+      )}
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+      >
+        <label className="grid gap-1 text-sm">
+          <span>名称</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.name}
+            onChange={(event) => update('name', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>模型</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.model}
+            onChange={(event) => update('model', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm md:col-span-2">
+          <span>base_url</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.base_url}
+            onChange={(event) => update('base_url', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>API key 环境变量</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.api_key_ref}
+            onChange={(event) =>
+              update('api_key_ref', event.target.value)
+            }
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>temperature</span>
+          <input
+            type="number"
+            step="0.1"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.temperature}
+            onChange={(event) =>
+              update('temperature', event.target.value)
+            }
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>max_tokens</span>
+          <input
+            type="number"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.max_tokens}
+            onChange={(event) =>
+              update('max_tokens', event.target.value)
+            }
+          />
+        </label>
+        <label className="grid gap-1 text-sm md:col-span-2">
+          <span>extra JSON</span>
+          <textarea
+            className="rounded bg-slate-950 px-3 py-2 font-mono text-xs"
+            rows={2}
+            value={form.extra}
+            onChange={(event) => update('extra', event.target.value)}
+          />
+        </label>
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            保存 provider
+          </button>
+          {formError && (
+            <p role="alert" className="text-sm text-rose-300">
+              {formError}
+            </p>
+          )}
+        </div>
+      </form>
+
+      {loading ? (
+        <p className="text-sm text-slate-400">加载中…</p>
+      ) : providers.length === 0 ? (
+        <p className="text-sm text-slate-400">
+          还没有 provider。填写上方表单，环境变量名在启动服务前 export。
+        </p>
+      ) : (
+        <ul className="grid gap-3 md:grid-cols-2">
+          {providers.map((provider) => (
+            <li
+              key={provider.id}
+              data-testid="provider-card"
+              className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4 text-sm"
+            >
+              <div className="text-base font-medium">{provider.name}</div>
+              <div className="text-slate-400">
+                {provider.model} · {provider.base_url}
+              </div>
+              <div className="text-slate-500">
+                环境变量：{provider.api_key_ref}
+              </div>
+              <div className="flex items-center gap-3">
+                <span
+                  data-testid="key-configured"
+                  className={
+                    provider.key_configured
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }
+                >
+                  {provider.key_configured ? 'key 已配置' : 'key 未配置'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleProbe(provider.id)}
+                  className="rounded border border-slate-700 px-3 py-1"
+                >
+                  探测
+                </button>
+                {probes[provider.id] && (
+                  <span className="text-slate-300">{probes[provider.id]}</span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export default function ProvidersPage() {
+  const queryClient = useQueryClient()
+  const providers = useProviders()
+  const create = useMutation({
+    mutationFn: api.providers.create,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.providers }),
+  })
+  const probe = useMutation({ mutationFn: api.providers.probe })
+
+  return (
+    <ProvidersView
+      providers={providers.data ?? []}
+      loading={providers.isPending}
+      error={providers.error ? describeError(providers.error) : null}
+      onCreate={async (payload) => {
+        await create.mutateAsync(payload)
+      }}
+      onProbe={async (id) => probe.mutateAsync(id)}
+    />
+  )
+}
