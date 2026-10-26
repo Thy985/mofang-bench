@@ -63,39 +63,50 @@ export const api = {
     create: (payload: ProviderCreate) =>
       request<Provider>('/providers', post(payload)),
     probe: (id: string) =>
-      request<ProbeResult>(`/providers/${id}/probe`, { method: 'POST' }),
+      request<ProbeResult>(
+        `/providers/${encodeURIComponent(id)}/probe`,
+        { method: 'POST' },
+      ),
   },
   benchmarks: {
     list: () => request<BenchmarkSummary[]>('/benchmarks'),
     create: (payload: BenchmarkCreate) =>
       request<BenchmarkDetail>('/benchmarks', post(payload)),
-    get: (id: string) => request<BenchmarkDetail>(`/benchmarks/${id}`),
+    get: (id: string) =>
+      request<BenchmarkDetail>(`/benchmarks/${encodeURIComponent(id)}`),
   },
   runs: {
     list: () => request<Run[]>('/runs'),
     create: (payload: RunCreate) =>
       request<{ id: string }>('/runs', post(payload)),
     get: (id: string) =>
-      request<{ run: Run; episodes: Episode[] }>(`/runs/${id}`),
-    snapshot: (id: string) => request<Snapshot>(`/runs/${id}/snapshot`),
+      request<{ run: Run; episodes: Episode[] }>(
+        `/runs/${encodeURIComponent(id)}`,
+      ),
+    snapshot: (id: string) =>
+      request<Snapshot>(`/runs/${encodeURIComponent(id)}/snapshot`),
     cancel: (id: string) =>
-      request<{ cancelled: boolean }>(`/runs/${id}/cancel`, {
-        method: 'POST',
-      }),
-    report: (id: string) => request<Report>(`/runs/${id}/report`),
+      request<{ cancelled: boolean }>(
+        `/runs/${encodeURIComponent(id)}/cancel`,
+        { method: 'POST' },
+      ),
+    report: (id: string) =>
+      request<Report>(`/runs/${encodeURIComponent(id)}/report`),
     eventsUrl: (id: string, after = 0) =>
-      `${API}/runs/${id}/events?after=${after}`,
+      `${API}/runs/${encodeURIComponent(id)}/events?after=${after}`,
   },
   episodes: {
-    get: (id: string) => request<Episode>(`/episodes/${id}`),
-    steps: (id: string) => request<Step[]>(`/episodes/${id}/steps`),
+    get: (id: string) =>
+      request<Episode>(`/episodes/${encodeURIComponent(id)}`),
+    steps: (id: string) =>
+      request<Step[]>(`/episodes/${encodeURIComponent(id)}/steps`),
   },
 }
 
 export function exportUrl(runId: string, format: 'csv' | 'md'): string {
-  return `${API}/runs/${runId}/export?format=${format}`
+  return `${API}/runs/${encodeURIComponent(runId)}/export?format=${format}`
 }
 
 export function reportUrl(runId: string): string {
-  return `${API}/runs/${runId}/report`
+  return `${API}/runs/${encodeURIComponent(runId)}/report`
 }

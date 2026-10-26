@@ -156,6 +156,38 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/providers/p1/probe')
   })
 
+  // benchmark 的 id 是 f"{name}-{cube}-{seed}"，name 只约束 min_length=1；
+  // 含 / ? # 的 id 不百分号编码会拼成别的路径，详情页拿到静默 404。
+  it('percent-encodes id path segments', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(jsonResponse({}))
+    const id = '2x2/3x3 混合-2x2-3'
+    const encoded = '2x2%2F3x3%20%E6%B7%B7%E5%90%88-2x2-3'
+    await api.benchmarks.get(id)
+    await api.runs.get(id)
+    await api.runs.snapshot(id)
+    await api.runs.cancel(id)
+    await api.runs.report(id)
+    await api.providers.probe(id)
+    await api.episodes.get(id)
+    await api.episodes.steps(id)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `/api/benchmarks/${encoded}`,
+      `/api/runs/${encoded}`,
+      `/api/runs/${encoded}/snapshot`,
+      `/api/runs/${encoded}/cancel`,
+      `/api/runs/${encoded}/report`,
+      `/api/providers/${encoded}/probe`,
+      `/api/episodes/${encoded}`,
+      `/api/episodes/${encoded}/steps`,
+    ])
+    expect(api.runs.eventsUrl(id, 7)).toBe(
+      `/api/runs/${encoded}/events?after=7`,
+    )
+    expect(exportUrl(id, 'csv')).toBe(`/api/runs/${encoded}/export?format=csv`)
+    expect(reportUrl(id)).toBe(`/api/runs/${encoded}/report`)
+  })
+
   it('reaches every endpoint through /api', async () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(jsonResponse([]))
