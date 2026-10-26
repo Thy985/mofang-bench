@@ -2027,6 +2027,7 @@ git commit -m "feat: API 客户端与查询 hooks"
 **Files:**
 - Create: `frontend/src/pages/ProvidersPage.tsx`
 - Create: `frontend/src/pages/ProvidersPage.test.tsx`
+- Create: `frontend/src/lib/errors.ts`（`describeError`，Task 10/11/15 复用）
 - Modify: `frontend/src/App.tsx`
 
 **Interfaces:**
@@ -2034,7 +2035,45 @@ git commit -m "feat: API 客户端与查询 hooks"
 - Produces:
   - `ProvidersView`（可测试的纯展示组件）
   - `ProvidersPage`（容器，默认导出）
+  - `describeError(err: unknown): string` —— `ApiError` 映射为“中文标签（HTTP n）：detail”，结构化 detail 取其中的 `message`；非 `ApiError`（fetch 被拒的 `TypeError`）映射为中文网络错误。界面文案必须中文，禁止把后端英文 detail 单独当作错误文案。
   - `data-testid`：`provider-card`、`key-configured`
+
+`frontend/src/lib/errors.ts`：
+
+```ts
+import { ApiError } from '../api/client'
+
+const STATUS_LABELS: Record<number, string> = {
+  400: '请求不合法',
+  404: '未找到该记录',
+  409: '已存在相同记录',
+  422: '字段校验未通过',
+  502: '上游模型服务不可用',
+}
+
+// 后端结构化 detail（如 probe 的 502 {kind, message}）在客户端被 JSON 字符串化，取 message 展示。
+function readableDetail(detail: string): string {
+  try {
+    const parsed: unknown = JSON.parse(detail)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const message = (parsed as { message?: unknown }).message
+      if (typeof message === 'string') return message
+    }
+  } catch {
+    // 非 JSON detail 原样展示
+  }
+  return detail
+}
+
+export function describeError(err: unknown): string {
+  if (!(err instanceof ApiError)) {
+    // fetch 被拒（后端未启动/不可达）时是 TypeError，不是 ApiError
+    return '网络错误：无法访问后端，请确认服务已启动'
+  }
+  const label = STATUS_LABELS[err.status] ?? '后端返回错误'
+  return `${label}（HTTP ${err.status}）：${readableDetail(err.detail)}`
+}
+```
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2155,6 +2194,7 @@ Expected: FAIL，模块不存在。
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
+import { describeError } from '../lib/errors'
 import { qk, useProviders } from '../api/queries'
 import type {
   ProbeResult,
@@ -2228,7 +2268,7 @@ export function ProvidersView({
       })
       setForm(initialForm)
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err))
+      setFormError(describeError(err))
     } finally {
       setSubmitting(false)
     }
@@ -2247,7 +2287,7 @@ export function ProvidersView({
     } catch (err) {
       setProbes((current) => ({
         ...current,
-        [id]: err instanceof Error ? err.message : String(err),
+        [id]: describeError(err),
       }))
     }
   }
@@ -2598,6 +2638,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { api } from '../api/client'
+import { describeError } from '../lib/errors'
 import { qk, useBenchmarks } from '../api/queries'
 import type {
   BenchmarkCreate,
@@ -2673,7 +2714,7 @@ export function BenchmarksView({
       })
       setForm(initialForm)
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err))
+      setFormError(describeError(err))
     } finally {
       setSubmitting(false)
     }
@@ -3093,6 +3134,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { describeError } from '../lib/errors'
 import { useBenchmarks, useProviders, qk } from '../api/queries'
 import type {
   BenchmarkSummary,
@@ -3172,7 +3214,7 @@ export function NewRunView({
         budget,
       })
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err))
+      setFormError(describeError(err))
     } finally {
       setSubmitting(false)
     }
