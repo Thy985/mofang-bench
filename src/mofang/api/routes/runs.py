@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import csv
+import io
+from dataclasses import asdict
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
+
+from ...service.factory import budget_for
+from ...store.benchmarks import get_benchmark
+from ...store.providers import get_provider
+from ...store.runs import (
+    create_run,
+    get_run,
+    get_run_episodes,
+    get_steps,
+    list_runs,
+)
+from ..events import parse_last_event_id
+from ..schemas import EpisodeOut, RunCreate, RunOut
+
+router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+def _episode_out(episode: dict) -> EpisodeOut:
+    data = dict(episode)
+    data["task_key"] = data["task_id"].split(":", 1)[-1]
+    return EpisodeOut(**data)
+
+
+def _run_out(run: dict) -> RunOut:
+    return RunOut(**run)
+
+
+@router.post("", status_code=202)
+async def start(payload: RunCreate, request: Request) -> dict:
+    db = request.app.state.db
+    provider = get_provider(db, payload.provider_id)
+    benchmark = get_benchmark(db, payload.benchmark_id)
+    if provider is None:
+        raise HTTPException(404, "provider not found")
+    if benchmark is None:
+        raise HTTPException(404, "benchmark not found")
+    try:
+        budget = asdict(budget_for(benchmark.cube, payload.budget))
+    except TypeError as exc:
+        raise HTTPException(400, f"invalid budget: {exc}") from exc
+    run_id = create_run(
+        db,
+        provider_id=provider.id,
+        benchmark_id=benchmark.id,
+        tool_mode=payload.tool_mode,
+        prompt_version="v1",
+        params=payload.params,
+        budget=budget,
+    )
+    request.app.state.service.start(run_id)
+    return {"id": run_id}
+
+
+@router.get("", response_model=list[RunOut])
+def history(request: Request) -> list[RunOut]:
+    return [_run_out(run) for run in list_runs(request.app.state.db)]
+
+
+@router.get("/{run_id}")
+def detail(run_id: str, request: Request) -> dict:
+    run = get_run(request.app.state.db, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    return {
+        "run": _run_out(run),
+        "episodes": [
+            _episode_out(item)
+            for item in get_run_episodes(request.app.state.db, run_id)
+        ],
+    }
+
+
+@router.get("/{run_id}/snapshot")
+def snapshot(run_id: str, request: Request) -> dict:
+    db = request.app.state.db
+    run = get_run(db, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    episodes = get_run_episodes(db, run_id)
+    current_state = None
+    if episodes:
+        last = episodes[-1]
+        current_state = last["final_state"]
+        if last["status"] == "running":
+            steps = get_steps(db, last["id"])
+            if steps:
+                current_state = steps[-1]["state"]
+    return {
+        "run": _run_out(run),
+        "episodes": [_episode_out(item) for item in episodes],
+        "last_event_id": len(request.app.state.events.history(run_id)),
+        "current_state": current_state,
+    }
+
+
+@router.get("/{run_id}/events")
+async def events(
+    run_id: str,
+    request: Request,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+):
+    if get_run(request.app.state.db, run_id) is None:
+        raise HTTPException(404, "run not found")
+    stream = request.app.state.events.stream(
+        run_id, after=parse_last_event_id(last_event_id)
+    )
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/{run_id}/cancel")
+async def cancel(run_id: str, request: Request) -> dict:
+    run = get_run(request.app.state.db, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    if run["status"] not in ("queued", "running"):
+        raise HTTPException(409, "run is not running")
+    cancelled = await request.app.state.service.cancel(run_id)
+    if not cancelled:
+        raise HTTPException(409, "run is not running")
+    return {"cancelled": True}
+
+
+@router.get("/{run_id}/report")
+def report(run_id: str, request: Request) -> dict:
+    db = request.app.state.db
+    run = get_run(db, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    episodes = [
+        _episode_out(item).model_dump()
+        for item in get_run_episodes(db, run_id)
+    ]
+    solved = sum(1 for item in episodes if item["solved"])
+    totals = run["totals"] or {
+        "benchmark_id": run["benchmark_id"],
+        "benchmark_hash": None,
+        "benchmark_total_tasks": None,
+        "partial": True,
+        "totals": {
+            "tasks": len(episodes),
+            "solved": solved,
+            "solve_rate": solved / len(episodes) if episodes else 0.0,
+            "ci95": [0.0, 1.0],
+        },
+        "by_bin": {},
+        "episodes": [],
+    }
+    payload = dict(totals)
+    payload.update(
+        {
+            "run_id": run_id,
+            "provider_id": run["provider_id"],
+            "benchmark_id": run["benchmark_id"],
+            "status": run["status"],
+            "started_at": run["started_at"],
+            "finished_at": run["finished_at"],
+            "episodes": episodes,
+        }
+    )
+    return payload
+
+
+@router.get("/{run_id}/export")
+def export(run_id: str, request: Request, format: str = "csv") -> Response:
+    db = request.app.state.db
+    run = get_run(db, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    episodes = [
+        _episode_out(item).model_dump()
+        for item in get_run_episodes(db, run_id)
+    ]
+    columns = [
+        "task_id", "status", "solved", "moves_used", "reference_length",
+        "efficiency", "progress_ratio", "protocol_errors", "tokens_in",
+        "tokens_out", "latency_ms", "failure_code",
+    ]
+    rows = [{**item, "task_id": item["task_key"]} for item in episodes]
+    if format == "csv":
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows({key: item.get(key) for key in columns} for item in rows)
+        return Response(
+            buffer.getvalue(),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="run-{run_id}.csv"'
+            },
+        )
+    if format == "md":
+        lines = [
+            "| " + " | ".join(columns) + " |",
+            "| " + " | ".join("---" for _ in columns) + " |",
+        ]
+        for item in rows:
+            lines.append(
+                "| " + " | ".join(str(item.get(key)) for key in columns) + " |"
+            )
+        return Response(
+            "\n".join(lines) + "\n",
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": f'attachment; filename="run-{run_id}.md"'
+            },
+        )
+    raise HTTPException(400, "format must be csv or md")

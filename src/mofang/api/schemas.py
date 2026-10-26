@@ -54,3 +54,49 @@ class RunCreate(BaseModel):
     tool_mode: Literal["both", "turn_only", "batch_only"] = "both"
     params: dict[str, Any] = Field(default_factory=dict)
     budget: dict[str, Any] = Field(default_factory=dict)
+
+
+class RunOut(BaseModel):
+    id: str
+    provider_id: str
+    benchmark_id: str
+    tool_mode: str
+    prompt_version: str
+    status: str
+    totals: dict[str, Any] | None
+    error: str | None
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+
+
+class EpisodeOut(BaseModel):
+    id: str
+    run_id: str
+    task_id: str
+    task_key: str
+    status: str
+    solved: bool
+    moves_used: int
+    reference_length: int
+    efficiency: float | None
+    progress_ratio: float | None
+    protocol_errors: int
+    tokens_in: int | None
+    tokens_out: int | None
+    latency_ms: int | None
+    failure_code: str | None
+    error: str | None
+    started_at: str | None
+    finished_at: str | None
+
+
+class StepOut(BaseModel):
+    id: str
+    seq: int
+    kind: str
+    tool_name: str | None
+    arguments: dict[str, Any] | None
+    result: dict[str, Any] | None
+    state: dict[str, Any] | None
+    reference_length_after: int | None

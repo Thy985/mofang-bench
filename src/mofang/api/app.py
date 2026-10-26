@@ -15,7 +15,7 @@ from ..store.db import Database
 from ..store.providers import ProviderRecord
 from ..store.runs import mark_running_interrupted
 from .events import RunEventBus
-from .routes import benchmarks, providers
+from .routes import benchmarks, episodes, providers, runs
 from .settings import Settings
 
 
@@ -59,4 +59,6 @@ def create_app(
     app.state.env = env_values
     app.include_router(providers.router)
     app.include_router(benchmarks.router)
+    app.include_router(runs.router)
+    app.include_router(episodes.router)
     return app
