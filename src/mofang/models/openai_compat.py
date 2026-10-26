@@ -8,6 +8,21 @@ import httpx
 
 from .provider import ModelParams, ModelTurn, ProviderError, ToolCall, Usage
 
+DEFAULT_TIMEOUT = 120.0
+
+
+def decode_json(response: httpx.Response) -> dict[str, Any]:
+    text = response.text.strip()
+    # 部分本地网关在普通 JSON 末尾附带 SSE 结束标记
+    if text.endswith("data: [DONE]"):
+        text = text[: -len("data: [DONE]")].rstrip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(
+            "bad_response", f"invalid JSON response: {text[:200]}"
+        ) from exc
+
 
 class OpenAICompatibleAdapter:
     def __init__(
@@ -18,12 +33,16 @@ class OpenAICompatibleAdapter:
         *,
         client: httpx.AsyncClient | None = None,
         retry_delay: float = 1.0,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.retry_delay = retry_delay
-        self._client = client or httpx.AsyncClient()
+        self.timeout = timeout
+        self._client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout, connect=10.0)
+        )
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -46,6 +65,7 @@ class OpenAICompatibleAdapter:
             "messages": messages,
             "temperature": params.temperature,
             "max_tokens": params.max_tokens,
+            "stream": False,
         }
         if tools:
             payload["tools"] = tools
@@ -64,7 +84,7 @@ class OpenAICompatibleAdapter:
                     headers=self._headers,
                 )
             except httpx.TimeoutException as exc:
-                last_error = str(exc)
+                last_error = str(exc) or f"request timed out after {self.timeout:g}s"
                 if attempt < 3:
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
@@ -80,7 +100,7 @@ class OpenAICompatibleAdapter:
                 raise ProviderError("auth", response.text)
             if response.status_code >= 400:
                 raise ProviderError("bad_request", response.text)
-            return response.json()
+            return decode_json(response)
         raise ProviderError("server", last_error or "request failed", retryable=True)
 
     def _parse(self, data: dict[str, Any]) -> ModelTurn:

@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -98,6 +100,38 @@ async def test_retries_429(adapter: OpenAICompatibleAdapter) -> None:
     )
     assert turn.content == "ok"
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_tolerates_sse_done_suffix(adapter: OpenAICompatibleAdapter) -> None:
+    body = '{"choices": [{"message": {"content": "ok"}}]}data: [DONE]\n\n'
+    respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(200, text=body)
+    )
+    turn = await adapter.chat(
+        [{"role": "user", "content": "go"}], [], ModelParams()
+    )
+    assert turn.content == "ok"
+
+
+async def test_default_client_timeout_allows_slow_models() -> None:
+    adapter = OpenAICompatibleAdapter(
+        base_url=BASE, api_key="secret", model="test-model"
+    )
+    try:
+        assert adapter._client.timeout.read >= 60
+    finally:
+        await adapter.close()
+
+
+@respx.mock
+async def test_requests_non_streaming(adapter: OpenAICompatibleAdapter) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+    )
+    await adapter.chat([{"role": "user", "content": "go"}], [], ModelParams())
+    body = json.loads(route.calls[0].request.content)
+    assert body["stream"] is False
 
 
 @respx.mock
