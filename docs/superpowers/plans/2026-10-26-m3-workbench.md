@@ -406,6 +406,7 @@ from mofang.store.benchmarks import task_row_id
 def test_snapshot_returns_live_state_from_events(tmp_path: Path) -> None:
     db = Database(tmp_path / "snap.db")
     state = apply_moves(CubeState.solved(2), ["R"])
+    live = apply_moves(CubeState.solved(2), ["U"])
     benchmark = Benchmark(
         id="snap-bench",
         name="snap",
@@ -443,12 +444,12 @@ def test_snapshot_returns_live_state_from_events(tmp_path: Path) -> None:
         app.state.events.publish(
             run_id,
             "move.applied",
-            {"moves": ["R'"], "state": state.to_json(), "moves_used": 1},
+            {"moves": ["U"], "state": live.to_json(), "moves_used": 1},
             episode_id=episode_id,
         )
         response = client.get(f"/api/runs/{run_id}/snapshot")
         assert response.status_code == 200
-        assert response.json()["current_state"] == state.to_json()
+        assert response.json()["current_state"] == live.to_json()
 
 
 def test_snapshot_falls_back_to_task_state(tmp_path: Path) -> None:
@@ -490,15 +491,127 @@ def test_snapshot_falls_back_to_task_state(tmp_path: Path) -> None:
         )
         response = client.get(f"/api/runs/{run_id}/snapshot")
         assert response.json()["current_state"] == state.to_json()
+
+
+def test_snapshot_uses_tool_result_payload_state(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap-tool.db")
+    task_state = apply_moves(CubeState.solved(2), ["R"])
+    live_state = apply_moves(CubeState.solved(2), ["F"])
+    benchmark = Benchmark(
+        id="snap-bench-tool",
+        name="snap-tool",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=task_state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        episode_id = create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        app.state.events.publish(
+            run_id,
+            "tool.result",
+            {
+                "tool": "get_state",
+                "ok": True,
+                "payload": {"state": live_state.to_json()},
+            },
+            episode_id=episode_id,
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.json()["current_state"] == live_state.to_json()
+
+
+def test_snapshot_ignores_other_episodes_events(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap-scope.db")
+    task_state = apply_moves(CubeState.solved(2), ["R"])
+    other_state = apply_moves(CubeState.solved(2), ["U"])
+    benchmark = Benchmark(
+        id="snap-bench-scope",
+        name="snap-scope",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=task_state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        first_episode = create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        app.state.events.publish(
+            run_id,
+            "move.applied",
+            {
+                "moves": ["U"],
+                "state": other_state.to_json(),
+                "moves_used": 1,
+            },
+            episode_id=first_episode,
+        )
+        create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:01+00:00",
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.json()["current_state"] == task_state.to_json()
 ```
 
 注意：必须在 `with TestClient(app)` 内部创建 run/episode，否则 lifespan 的 `mark_running_interrupted` 会把它们改成 `interrupted`。
 
+`test_snapshot_returns_live_state_from_events` 故意让 `live`（`U` 后的状态）与该题 `state`（`R` 后的状态）不同：若两者相同，删掉事件扫描循环也会靠 `task.state` 回退通过，测不出扫描本身。`test_snapshot_ignores_other_episodes_events` 钉住“只扫当前 episode”——`episodes` 按 rowid 排序，最后一个是新建的 running episode，前一题的事件必须被忽略。
+
 - [ ] **Step 2: 运行确认失败**
 
-Run: `uv run pytest tests/api/test_runs_api.py::test_snapshot_returns_live_state_from_events tests/api/test_runs_api.py::test_snapshot_falls_back_to_task_state -q`
+Run: `uv run pytest tests/api/test_runs_api.py -q -k snapshot`
 
-Expected: FAIL，`current_state` 为 `{}` 或 `None`。
+Expected: FAIL，`current_state` 为 `{}` 或 `None`；其中 `test_snapshot_ignores_other_episodes_events` 在当前实现下可能已通过（它钉的是修复后的行为），仍需在 Step 3 后复跑确认。
 
 - [ ] **Step 3: 实现 snapshot 回退**
 
@@ -529,6 +642,8 @@ def _live_state(db, events, run: dict, episodes: list[dict]) -> dict | None:
     if steps and steps[-1]["state"]:
         return steps[-1]["state"]
     for event in reversed(events.history(run["id"])):
+        if event.episode_id != last["id"]:
+            continue
         state = _event_state(event)
         if state is not None:
             return state
@@ -568,7 +683,7 @@ def _live_state(db, events, run: dict, episodes: list[dict]) -> dict | None:
 
 Run: `uv run pytest tests/api/test_runs_api.py -q`
 
-Expected: 5 passed。
+Expected: 8 passed（Task 3 结束时该文件为 6 项，本任务新增 2 项）。
 
 - [ ] **Step 5: 提交**
 
