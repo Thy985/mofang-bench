@@ -10,6 +10,7 @@ from mofang.models.provider import (
     ModelTurn,
     ProviderError,
     ToolCall,
+    Usage,
 )
 from mofang.runner.budget import Budget
 from mofang.runner.episode import EpisodeRunner, EpisodeStatus
@@ -252,3 +253,40 @@ async def test_tool_mode_filters_tools(table_solver: Table2x2Solver) -> None:
     ).run(task)
     names = {tool["function"]["name"] for tool in provider.tools}
     assert names == {"apply_moves", "get_state", "check_solved"}
+
+
+async def test_events_include_progress_and_usage(table_solver: Table2x2Solver) -> None:
+    task = make_task(table_solver, ["R"])
+    provider = FakeProvider(
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="apply_moves",
+                        arguments={"moves": ["R'"]},
+                    )
+                ],
+                usage=Usage(prompt_tokens=11, completion_tokens=7),
+            )
+        ]
+    )
+    events: list[tuple[str, dict]] = []
+
+    def emit(kind: str, payload: dict) -> None:
+        events.append((kind, payload))
+
+    result = await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+    ).run(task, emit=emit)
+
+    message = [payload for kind, payload in events if kind == "model.message"][-1]
+    assert message["usage"] == {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+    }
+    move = [payload for kind, payload in events if kind == "move.applied"][-1]
+    assert move["reference_length_after"] == 0
+    assert result.status == EpisodeStatus.SOLVED

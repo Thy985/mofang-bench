@@ -202,7 +202,14 @@ class EpisodeRunner:
                 break
             notify(
                 "model.message",
-                {"content": turn.content, "tool_calls": len(turn.tool_calls)},
+                {
+                    "content": turn.content,
+                    "tool_calls": len(turn.tool_calls),
+                    "usage": {
+                        "prompt_tokens": tokens_in,
+                        "completion_tokens": tokens_out,
+                    },
+                },
             )
             assistant: dict[str, Any] = {
                 "role": "assistant",
@@ -285,6 +292,7 @@ class EpisodeRunner:
                                 "state": executor.state.to_json(),
                                 "moves_used": executor.moves_used,
                                 "solved": executor.state.is_solved(),
+                                "reference_length_after": length_after,
                             },
                         )
                     if executor.state.is_solved():
