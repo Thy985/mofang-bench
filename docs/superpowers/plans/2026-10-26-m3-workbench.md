@@ -1035,6 +1035,7 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
     proxy: {
@@ -1204,6 +1205,31 @@ export interface BinStats {
   mean_moves: number
 }
 
+// 后端 `aggregate_report()` 的完整返回；run.totals 与 run.finished 事件都携带它。
+export interface AggregateReport {
+  benchmark_id: string
+  benchmark_hash: string
+  benchmark_total_tasks: number
+  partial: boolean
+  totals: AggregateTotals
+  by_bin: Record<string, BinStats>
+  episodes: Array<{
+    task_id: string
+    status: string
+    solved: boolean
+    moves_used: number
+    reference_length: number
+    efficiency: number | null
+    progress_ratio: number
+    protocol_errors: number
+    tokens_in: number
+    tokens_out: number
+    latency_ms: number
+    failure_code: string | null
+    error: string | null
+  }>
+}
+
 export interface Run {
   id: string
   provider_id: string
@@ -1211,7 +1237,7 @@ export interface Run {
   tool_mode: ToolMode
   prompt_version: string
   status: string
-  totals: Record<string, unknown> | null
+  totals: AggregateReport | null
   error: string | null
   created_at: string
   started_at: string | null
@@ -1344,7 +1370,7 @@ export type RunEvent =
     >
   | RunEventBase<
       'run.finished',
-      { status: string; totals: Record<string, unknown> | null }
+      { status: string; totals: AggregateReport | null }
     >
   | RunEventBase<'run.error', { message: string }>
 ```
