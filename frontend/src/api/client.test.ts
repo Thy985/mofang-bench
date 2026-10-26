@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, api, exportUrl, reportUrl } from './client'
-import type { ProviderCreate } from './types'
+import type { ProviderCreate, RunCreate } from './types'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -97,6 +97,7 @@ describe('api client', () => {
 
   it('builds export and report urls', () => {
     expect(exportUrl('r1', 'csv')).toBe('/api/runs/r1/export?format=csv')
+    expect(exportUrl('r1', 'md')).toBe('/api/runs/r1/export?format=md')
     expect(reportUrl('r1')).toBe('/api/runs/r1/report')
     expect(api.runs.eventsUrl('r1', 7)).toBe('/api/runs/r1/events?after=7')
   })
@@ -188,20 +189,34 @@ describe('api client', () => {
     expect(reportUrl(id)).toBe(`/api/runs/${encoded}/report`)
   })
 
+  // runs.create 曾是唯一没被调用过的 api.*：URL、方法、请求体一并钉住，
+  // 这套件从此覆盖 api 对象的每个函数。
   it('reaches every endpoint through /api', async () => {
     vi.stubGlobal('fetch', fetchMock)
     fetchMock.mockResolvedValue(jsonResponse([]))
+    const runPayload: RunCreate = {
+      provider_id: 'p1',
+      benchmark_id: 'b1',
+      tool_mode: 'both',
+      params: {},
+      budget: { max_seconds: 60 },
+    }
     await api.benchmarks.list()
     await api.episodes.get('e1')
     await api.episodes.steps('e1')
     await api.runs.list()
     await api.runs.report('r1')
+    await api.runs.create(runPayload)
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/benchmarks',
       '/api/episodes/e1',
       '/api/episodes/e1/steps',
       '/api/runs',
       '/api/runs/r1/report',
+      '/api/runs',
     ])
+    const [, createInit] = fetchMock.mock.calls[5]
+    expect(createInit.method).toBe('POST')
+    expect(JSON.parse(createInit.body as string)).toEqual(runPayload)
   })
 })
