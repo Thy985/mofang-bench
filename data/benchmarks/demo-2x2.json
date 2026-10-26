@@ -1,0 +1,473 @@
+{
+  "id": "demo-2x2-7",
+  "name": "demo",
+  "version": "v1",
+  "cube": "2x2",
+  "kind": "frozen",
+  "tasks": [
+    {
+      "id": "2x2-1-1",
+      "cube": "2x2",
+      "scramble": [
+        "F"
+      ],
+      "scramble_depth": 1,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "orange",
+              "orange"
+            ],
+            [
+              "white",
+              "white"
+            ]
+          ],
+          "R": [
+            [
+              "white",
+              "red"
+            ],
+            [
+              "white",
+              "red"
+            ]
+          ],
+          "F": [
+            [
+              "green",
+              "green"
+            ],
+            [
+              "green",
+              "green"
+            ]
+          ],
+          "D": [
+            [
+              "yellow",
+              "yellow"
+            ],
+            [
+              "red",
+              "red"
+            ]
+          ],
+          "L": [
+            [
+              "orange",
+              "yellow"
+            ],
+            [
+              "orange",
+              "yellow"
+            ]
+          ],
+          "B": [
+            [
+              "blue",
+              "blue"
+            ],
+            [
+              "blue",
+              "blue"
+            ]
+          ]
+        }
+      },
+      "reference_length": 1,
+      "reference_kind": "exact",
+      "bin": "1"
+    },
+    {
+      "id": "2x2-1-2",
+      "cube": "2x2",
+      "scramble": [
+        "D'"
+      ],
+      "scramble_depth": 1,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "white",
+              "white"
+            ],
+            [
+              "white",
+              "white"
+            ]
+          ],
+          "R": [
+            [
+              "blue",
+              "blue"
+            ],
+            [
+              "red",
+              "red"
+            ]
+          ],
+          "F": [
+            [
+              "red",
+              "red"
+            ],
+            [
+              "green",
+              "green"
+            ]
+          ],
+          "D": [
+            [
+              "yellow",
+              "yellow"
+            ],
+            [
+              "yellow",
+              "yellow"
+            ]
+          ],
+          "L": [
+            [
+              "green",
+              "green"
+            ],
+            [
+              "orange",
+              "orange"
+            ]
+          ],
+          "B": [
+            [
+              "orange",
+              "orange"
+            ],
+            [
+              "blue",
+              "blue"
+            ]
+          ]
+        }
+      },
+      "reference_length": 1,
+      "reference_kind": "exact",
+      "bin": "1"
+    },
+    {
+      "id": "2x2-2-1",
+      "cube": "2x2",
+      "scramble": [
+        "U",
+        "B"
+      ],
+      "scramble_depth": 2,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "white",
+              "white"
+            ],
+            [
+              "blue",
+              "red"
+            ]
+          ],
+          "R": [
+            [
+              "red",
+              "yellow"
+            ],
+            [
+              "blue",
+              "yellow"
+            ]
+          ],
+          "F": [
+            [
+              "green",
+              "green"
+            ],
+            [
+              "red",
+              "red"
+            ]
+          ],
+          "D": [
+            [
+              "green",
+              "orange"
+            ],
+            [
+              "yellow",
+              "yellow"
+            ]
+          ],
+          "L": [
+            [
+              "white",
+              "orange"
+            ],
+            [
+              "white",
+              "green"
+            ]
+          ],
+          "B": [
+            [
+              "blue",
+              "orange"
+            ],
+            [
+              "blue",
+              "orange"
+            ]
+          ]
+        }
+      },
+      "reference_length": 2,
+      "reference_kind": "exact",
+      "bin": "2"
+    },
+    {
+      "id": "2x2-2-2",
+      "cube": "2x2",
+      "scramble": [
+        "F'",
+        "U'"
+      ],
+      "scramble_depth": 2,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "white",
+              "red"
+            ],
+            [
+              "white",
+              "red"
+            ]
+          ],
+          "R": [
+            [
+              "yellow",
+              "red"
+            ],
+            [
+              "green",
+              "green"
+            ]
+          ],
+          "F": [
+            [
+              "green",
+              "green"
+            ],
+            [
+              "orange",
+              "white"
+            ]
+          ],
+          "D": [
+            [
+              "yellow",
+              "yellow"
+            ],
+            [
+              "orange",
+              "orange"
+            ]
+          ],
+          "L": [
+            [
+              "orange",
+              "white"
+            ],
+            [
+              "blue",
+              "blue"
+            ]
+          ],
+          "B": [
+            [
+              "blue",
+              "blue"
+            ],
+            [
+              "yellow",
+              "red"
+            ]
+          ]
+        }
+      },
+      "reference_length": 2,
+      "reference_kind": "exact",
+      "bin": "2"
+    },
+    {
+      "id": "2x2-3-1",
+      "cube": "2x2",
+      "scramble": [
+        "R",
+        "U2",
+        "L"
+      ],
+      "scramble_depth": 3,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "yellow",
+              "white"
+            ],
+            [
+              "blue",
+              "white"
+            ]
+          ],
+          "R": [
+            [
+              "red",
+              "red"
+            ],
+            [
+              "orange",
+              "orange"
+            ]
+          ],
+          "F": [
+            [
+              "green",
+              "yellow"
+            ],
+            [
+              "green",
+              "blue"
+            ]
+          ],
+          "D": [
+            [
+              "green",
+              "blue"
+            ],
+            [
+              "white",
+              "blue"
+            ]
+          ],
+          "L": [
+            [
+              "orange",
+              "red"
+            ],
+            [
+              "orange",
+              "red"
+            ]
+          ],
+          "B": [
+            [
+              "white",
+              "yellow"
+            ],
+            [
+              "green",
+              "yellow"
+            ]
+          ]
+        }
+      },
+      "reference_length": 3,
+      "reference_kind": "exact",
+      "bin": "3"
+    },
+    {
+      "id": "2x2-3-2",
+      "cube": "2x2",
+      "scramble": [
+        "R",
+        "B2",
+        "U'"
+      ],
+      "scramble_depth": 3,
+      "state": {
+        "cube": "2x2",
+        "faces": {
+          "U": [
+            [
+              "blue",
+              "white"
+            ],
+            [
+              "yellow",
+              "green"
+            ]
+          ],
+          "R": [
+            [
+              "red",
+              "orange"
+            ],
+            [
+              "green",
+              "yellow"
+            ]
+          ],
+          "F": [
+            [
+              "green",
+              "yellow"
+            ],
+            [
+              "red",
+              "orange"
+            ]
+          ],
+          "D": [
+            [
+              "green",
+              "white"
+            ],
+            [
+              "yellow",
+              "blue"
+            ]
+          ],
+          "L": [
+            [
+              "red",
+              "orange"
+            ],
+            [
+              "blue",
+              "white"
+            ]
+          ],
+          "B": [
+            [
+              "blue",
+              "white"
+            ],
+            [
+              "red",
+              "orange"
+            ]
+          ]
+        }
+      },
+      "reference_length": 3,
+      "reference_kind": "exact",
+      "bin": "3"
+    }
+  ],
+  "content_hash": "e0162f577d59dbb60ebd664b161ec377d82bd7360d2db29e7f0054154191ac5d",
+  "created_at": "2026-10-26T03:16:24.298400+00:00"
+}
