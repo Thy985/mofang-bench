@@ -153,6 +153,7 @@ class OpenAICompatibleAdapter:
             ],
             "tool_choice": "auto",
             "max_tokens": 16,
+            "stream": False,
         }
         try:
             await self._post(payload)

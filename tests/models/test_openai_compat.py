@@ -135,6 +135,18 @@ async def test_requests_non_streaming(adapter: OpenAICompatibleAdapter) -> None:
 
 
 @respx.mock
+async def test_probe_requests_non_streaming(adapter: OpenAICompatibleAdapter) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}}]}
+        )
+    )
+    assert await adapter.probe_tools() is True
+    body = json.loads(route.calls[0].request.content)
+    assert body["stream"] is False
+
+
+@respx.mock
 async def test_auth_error_does_not_retry(adapter: OpenAICompatibleAdapter) -> None:
     route = respx.post(f"{BASE}/chat/completions").mock(
         return_value=httpx.Response(401, text="bad key")
