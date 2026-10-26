@@ -1,0 +1,6540 @@
+# M3 本地工作台实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 在现有 FastAPI/SSE 后端之上交付 React + three.js 本地工作台：配置 provider、生成基准集、启动 run、实时 3D 回放、结果与单题回放。
+
+**Architecture:** 后端先做 7 项小契约扩展（事件字段、snapshot、SSE `after`、Benchmark 409、静态托管），前端用 Vite SPA 消费 REST + SSE。3D 采用“槽位 cubie + 刚性旋转 + 批次末按权威 facelet 重涂”，前端不做距离/解出率计算。E2E 用独立 mock OpenAI 服务，生产代码不内置假模型。
+
+**Tech Stack:** Python 3.12 / FastAPI / SQLite / pytest；React 19 / TypeScript / Vite / Tailwind v4 / TanStack Query / three / @react-three/fiber / @react-three/drei；Vitest / React Testing Library / Playwright。
+
+**Spec:** `docs/superpowers/specs/2026-10-26-m3-workbench-design.md`
+
+## Global Constraints
+
+- 只在本地提交，不推送远程；当前基线分支 `plan/api-workbench`，实施前创建 `plan/m3-workbench`。
+- 每个任务严格 TDD：先写失败测试，确认失败，再写最小实现，测试通过后提交。
+- 后端密钥只从环境变量读取；任何文件、DB、日志、测试快照都不得写入真实 key。
+- 服务默认绑定 `127.0.0.1`；CORS 只允许 `127.0.0.1:5173` / `localhost:5173`。
+- GPL 边界不变：只有 `src/mofang/cube/solver_worker.py` 可以 `import twophase`；前端、API、store 不得导入。
+- 文档与界面文案用中文；代码注释只在“为什么”不明显时写一行。
+- 现有 159 项后端测试必须保持全绿。
+- 2x2 距离表必须存在于 `data/cache/2x2_distances.pkl`；缺失时先运行 `uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_distances.pkl`。
+- 3x3 生成需要 `uv sync --extra dev --extra solver` 且已建 `twophase/` 表；M3 自动化测试不生成 3x3 题集。
+- 前端依赖锁 `frontend/package-lock.json`；`node_modules/`、`dist/` 不提交。
+- 统一验证命令：
+  - 后端：`uv run pytest -q`
+  - 前端：`cd frontend && npm run typecheck && npm run test:run && npm run build`
+  - E2E：`cd frontend && npm run e2e`
+- E2E 固定端口：mock `20129`、API `8000`、Vite `5173`；E2E 使用临时 DB `data/e2e-<timestamp>.db`（已 gitignore）。
+
+---
+
+## 文件结构
+
+```text
+frontend/
+  package.json
+  vite.config.ts                 # Vite + Tailwind + /api 代理
+  vitest.config.ts               # jsdom + setup
+  playwright.config.ts           # mock/API/Vite 三进程
+  e2e/workbench.spec.ts
+  src/
+    main.tsx                     # QueryClient + BrowserRouter
+    App.tsx                      # 路由与布局
+    index.css                    # Tailwind 与基础主题
+    test/setup.ts
+    lib/format.ts                # 时间/百分比/状态/颜色格式化
+    api/types.ts                 # API 与 SSE 类型
+    api/client.ts                # fetch 封装、错误归一化、导出 URL
+    api/queries.ts               # TanStack Query hooks
+    components/Layout.tsx
+    components/StatusBadge.tsx
+    components/ProgressChart.tsx
+    components/ToolLog.tsx
+    pages/ProvidersPage.tsx      # ProvidersView + 容器
+    pages/BenchmarksPage.tsx     # 列表/生成
+    pages/BenchmarkDetailPage.tsx
+    pages/NewRunPage.tsx
+    pages/RunsPage.tsx
+    pages/RunPage.tsx
+    pages/EpisodePage.tsx
+    cube/facelets.ts             # facelet → 槽位/法线
+    cube/moves.ts                # move → 轴/层/方向
+    cube/repaint.ts              # state → 贴纸涂色计划
+    cube/CubeView.tsx            # r3f Canvas + 动画队列
+    hooks/liveReducer.ts         # SSE 事件 → 页面状态
+    hooks/useRunEvents.ts        # snapshot + EventSource + 重连
+scripts/
+  fake_openai_server.py          # E2E/演示用 OpenAI-compatible mock
+```
+
+后端修改文件：
+
+- `src/mofang/runner/episode.py`：事件字段。
+- `src/mofang/api/schemas.py`：`RunOut.budget`。
+- `src/mofang/api/events.py`：`effective_after`。
+- `src/mofang/api/routes/runs.py`：SSE `after`、snapshot 实时局面。
+- `src/mofang/api/routes/benchmarks.py`：重复基准集 409。
+- `src/mofang/api/settings.py`、`src/mofang/api/app.py`：静态托管。
+
+---
+
+### Task 1: 事件携带参照距离与累计 tokens
+
+**Files:**
+- Modify: `src/mofang/runner/episode.py`
+- Test: `tests/runner/test_episode.py`
+
+**Interfaces:**
+- Consumes: `EpisodeRunner.run()` 已有 `emit(kind, payload)`。
+- Produces:
+  - `move.applied` data 增加 `reference_length_after: int | None`
+  - `model.message` data 增加 `usage: {"prompt_tokens": int, "completion_tokens": int}`（当前 episode 累计）
+
+- [ ] **Step 1: 写失败测试**
+
+在 `tests/runner/test_episode.py` 顶部补充导入：
+
+```python
+from mofang.models.provider import FakeProvider, ModelTurn, ToolCall, Usage
+```
+
+（若已有前三个导入，只补 `Usage`。）
+
+在文件末尾追加：
+
+```python
+async def test_events_include_progress_and_usage(table_solver: Table2x2Solver) -> None:
+    task = make_task(table_solver, ["R"])
+    provider = FakeProvider(
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="apply_moves",
+                        arguments={"moves": ["R'"]},
+                    )
+                ],
+                usage=Usage(prompt_tokens=11, completion_tokens=7),
+            )
+        ]
+    )
+    events: list[tuple[str, dict]] = []
+
+    def emit(kind: str, payload: dict) -> None:
+        events.append((kind, payload))
+
+    result = await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+    ).run(task, emit=emit)
+
+    message = [payload for kind, payload in events if kind == "model.message"][-1]
+    assert message["usage"] == {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+    }
+    move = [payload for kind, payload in events if kind == "move.applied"][-1]
+    assert move["reference_length_after"] == 0
+    assert result.status == EpisodeStatus.SOLVED
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/runner/test_episode.py::test_events_include_progress_and_usage -q`
+
+Expected: FAIL，`KeyError: 'usage'` 或 `KeyError: 'reference_length_after'`。
+
+- [ ] **Step 3: 扩展事件 payload**
+
+在 `src/mofang/runner/episode.py` 找到 `model.message` 的 `notify`：
+
+```python
+            notify(
+                "model.message",
+                {"content": turn.content, "tool_calls": len(turn.tool_calls)},
+            )
+```
+
+改为：
+
+```python
+            notify(
+                "model.message",
+                {
+                    "content": turn.content,
+                    "tool_calls": len(turn.tool_calls),
+                    "usage": {
+                        "prompt_tokens": tokens_in,
+                        "completion_tokens": tokens_out,
+                    },
+                },
+            )
+```
+
+找到 `move.applied` 的 `notify`：
+
+```python
+                        notify(
+                            "move.applied",
+                            {
+                                "moves": outcome.applied,
+                                "state": executor.state.to_json(),
+                                "moves_used": executor.moves_used,
+                                "solved": executor.state.is_solved(),
+                            },
+                        )
+```
+
+改为：
+
+```python
+                        notify(
+                            "move.applied",
+                            {
+                                "moves": outcome.applied,
+                                "state": executor.state.to_json(),
+                                "moves_used": executor.moves_used,
+                                "solved": executor.state.is_solved(),
+                                "reference_length_after": length_after,
+                            },
+                        )
+```
+
+`length_after` 已在同一循环中、`move.applied` 之前计算，直接复用。
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/runner/test_episode.py -q`
+
+Expected: 全部通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/runner/episode.py tests/runner/test_episode.py
+git commit -m "feat: 事件携带参照距离与累计 tokens"
+```
+
+---
+
+### Task 2: RunOut 暴露预算
+
+**Files:**
+- Modify: `src/mofang/api/schemas.py`
+- Test: `tests/api/test_runs_api.py`
+
+**Interfaces:**
+- Consumes: `get_run()` 已返回 `budget` 字典。
+- Produces: `RunOut.budget: dict[str, Any]`，供运行页显示上限。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `tests/api/test_runs_api.py::test_run_lifecycle_report_and_export` 的 `run = wait_finished(...)` 之后追加：
+
+```python
+        assert run["budget"]["max_moves"] == 30
+        assert run["budget"]["turn_timeout"] == 120.0
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/api/test_runs_api.py::test_run_lifecycle_report_and_export -q`
+
+Expected: FAIL，`KeyError: 'budget'` 或 Pydantic 缺字段。
+
+- [ ] **Step 3: 增加字段**
+
+在 `src/mofang/api/schemas.py` 的 `RunOut` 中，`tool_mode` 之后加入：
+
+```python
+    budget: dict[str, Any]
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/api/test_runs_api.py -q`
+
+Expected: 3 passed。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/api/schemas.py tests/api/test_runs_api.py
+git commit -m "feat: RunOut 暴露预算"
+```
+
+---
+
+### Task 3: SSE 支持 after 查询参数
+
+**Files:**
+- Modify: `src/mofang/api/events.py`
+- Modify: `src/mofang/api/routes/runs.py`
+- Test: `tests/api/test_events.py`
+- Test: `tests/api/test_runs_api.py`
+
+**Interfaces:**
+- Produces: `effective_after(last_event_id: str | None, after: int | None) -> int`
+- 路由：`GET /api/runs/{id}/events?after=N`，与 `Last-Event-ID` 取较大值。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `tests/api/test_events.py` 追加：
+
+```python
+def test_effective_after_prefers_larger_value() -> None:
+    assert effective_after("3", 5) == 5
+    assert effective_after("7", 2) == 7
+    assert effective_after(None, None) == 0
+    assert effective_after("bad", 4) == 4
+```
+
+并把导入改为：
+
+```python
+from mofang.api.events import (
+    RunEventBus,
+    effective_after,
+    format_sse,
+    parse_last_event_id,
+)
+```
+
+在 `tests/api/test_runs_api.py::test_run_lifecycle_report_and_export` 末尾追加：
+
+```python
+        assert client.get(
+            f"/api/runs/{run_id}/events?after=abc"
+        ).status_code == 422
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/api/test_events.py::test_effective_after_prefers_larger_value tests/api/test_runs_api.py::test_run_lifecycle_report_and_export -q`
+
+Expected: FAIL，`ImportError: effective_after`；路由查询参数校验可能已经是 422。
+
+- [ ] **Step 3: 实现 helper 与路由参数**
+
+在 `src/mofang/api/events.py` 的 `parse_last_event_id` 之后加入：
+
+```python
+def effective_after(last_event_id: str | None, after: int | None) -> int:
+    return max(parse_last_event_id(last_event_id), after or 0)
+```
+
+在 `src/mofang/api/routes/runs.py` 中：
+
+- 导入 `Query`：
+
+```python
+from fastapi import APIRouter, Header, HTTPException, Query, Request
+```
+
+- 导入 `effective_after`，不再需要 `parse_last_event_id`：
+
+```python
+from ..events import effective_after
+```
+
+- 修改路由签名与调用：
+
+```python
+@router.get("/{run_id}/events")
+async def events(
+    run_id: str,
+    request: Request,
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+    after: int = Query(default=0, ge=0),
+):
+    if get_run(request.app.state.db, run_id) is None:
+        raise HTTPException(404, "run not found")
+    stream = request.app.state.events.stream(
+        run_id, after=effective_after(last_event_id, after)
+    )
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/api/test_events.py tests/api/test_runs_api.py -q`
+
+Expected: 全部通过（events 4 项、runs 3 项）。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/api/events.py src/mofang/api/routes/runs.py tests/api/test_events.py tests/api/test_runs_api.py
+git commit -m "feat: SSE 支持 after 查询参数"
+```
+
+---
+
+### Task 4: snapshot 返回运行中 episode 的实时局面
+
+**Files:**
+- Modify: `src/mofang/api/routes/runs.py`
+- Test: `tests/api/test_runs_api.py`
+
+**Interfaces:**
+- Consumes: `RunEventBus.history()`、`get_steps()`、`get_benchmark()`。
+- Produces: `GET /api/runs/{id}/snapshot` 的 `current_state` 在 episode 运行中且无 step 时，依次回退：
+  1. 最后一个 `move.applied` 的 `data.state`
+  2. 最后一个 `tool.result` 的 `data.payload.state`
+  3. 该题 `task.state`
+  4. `null`
+
+- [ ] **Step 1: 写失败测试**
+
+在 `tests/api/test_runs_api.py` 顶部补充导入：
+
+```python
+from mofang.store.providers import create_provider
+from mofang.store.runs import create_episode, create_run
+from mofang.store.benchmarks import task_row_id
+```
+
+在文件末尾追加：
+
+```python
+def test_snapshot_returns_live_state_from_events(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap.db")
+    state = apply_moves(CubeState.solved(2), ["R"])
+    benchmark = Benchmark(
+        id="snap-bench",
+        name="snap",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        episode_id = create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        app.state.events.publish(
+            run_id,
+            "move.applied",
+            {"moves": ["R'"], "state": state.to_json(), "moves_used": 1},
+            episode_id=episode_id,
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.status_code == 200
+        assert response.json()["current_state"] == state.to_json()
+
+
+def test_snapshot_falls_back_to_task_state(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap2.db")
+    state = apply_moves(CubeState.solved(2), ["R"])
+    benchmark = Benchmark(
+        id="snap-bench-2",
+        name="snap2",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.json()["current_state"] == state.to_json()
+```
+
+注意：必须在 `with TestClient(app)` 内部创建 run/episode，否则 lifespan 的 `mark_running_interrupted` 会把它们改成 `interrupted`。
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/api/test_runs_api.py::test_snapshot_returns_live_state_from_events tests/api/test_runs_api.py::test_snapshot_falls_back_to_task_state -q`
+
+Expected: FAIL，`current_state` 为 `{}` 或 `None`。
+
+- [ ] **Step 3: 实现 snapshot 回退**
+
+在 `src/mofang/api/routes/runs.py` 的 `snapshot` 路由之前加入：
+
+```python
+def _event_state(event) -> dict | None:
+    if event.type == "move.applied":
+        state = event.data.get("state")
+        if isinstance(state, dict) and state:
+            return state
+    if event.type == "tool.result":
+        payload = event.data.get("payload")
+        if isinstance(payload, dict):
+            state = payload.get("state")
+            if isinstance(state, dict) and state:
+                return state
+    return None
+
+
+def _live_state(db, events, run: dict, episodes: list[dict]) -> dict | None:
+    if not episodes:
+        return None
+    last = episodes[-1]
+    if last["status"] != "running":
+        return last["final_state"] or None
+    steps = get_steps(db, last["id"])
+    if steps and steps[-1]["state"]:
+        return steps[-1]["state"]
+    for event in reversed(events.history(run["id"])):
+        state = _event_state(event)
+        if state is not None:
+            return state
+    benchmark = get_benchmark(db, run["benchmark_id"])
+    if benchmark is not None:
+        task_key = last["task_id"].split(":", 1)[-1]
+        for task in benchmark.tasks:
+            if task.id == task_key:
+                return task.state
+    return None
+```
+
+把 `snapshot` 中原来的：
+
+```python
+    episodes = get_run_episodes(db, run_id)
+    current_state = None
+    if episodes:
+        last = episodes[-1]
+        current_state = last["final_state"]
+        if last["status"] == "running":
+            steps = get_steps(db, last["id"])
+            if steps:
+                current_state = steps[-1]["state"]
+```
+
+改为：
+
+```python
+    episodes = get_run_episodes(db, run_id)
+    current_state = _live_state(
+        db, request.app.state.events, run, episodes
+    )
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/api/test_runs_api.py -q`
+
+Expected: 5 passed。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/api/routes/runs.py tests/api/test_runs_api.py
+git commit -m "fix: snapshot 返回运行中 episode 的实时局面"
+```
+
+---
+
+### Task 5: 重复基准集返回 409
+
+**Files:**
+- Modify: `src/mofang/api/routes/benchmarks.py`
+- Test: `tests/api/test_benchmarks_api.py`
+
+**Interfaces:**
+- Produces: `POST /api/benchmarks` 在 `f"{name}-{cube}-{seed}"` 已存在时返回 409，detail 为 `{"message": "benchmark already exists", "id": <id>}`。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `tests/api/test_benchmarks_api.py` 追加：
+
+```python
+def test_duplicate_benchmark_returns_conflict(tmp_path) -> None:
+    client = make_client(tmp_path)
+    payload = {
+        "name": "dup",
+        "cube": "2x2",
+        "depths": [1],
+        "per_depth": 1,
+        "seed": 3,
+    }
+    with client:
+        first = client.post("/api/benchmarks", json=payload)
+        assert first.status_code == 201
+        second = client.post("/api/benchmarks", json=payload)
+        assert second.status_code == 409
+        assert second.json()["detail"]["id"] == "dup-2x2-3"
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/api/test_benchmarks_api.py::test_duplicate_benchmark_returns_conflict -q`
+
+Expected: FAIL，第二次返回 201。
+
+- [ ] **Step 3: 提前检查**
+
+在 `src/mofang/api/routes/benchmarks.py::create` 的 solver 校验之后、`solver = None` 之前加入：
+
+```python
+    benchmark_id = f"{payload.name}-{payload.cube}-{payload.seed}"
+    if get_benchmark(request.app.state.db, benchmark_id) is not None:
+        raise HTTPException(
+            409,
+            {"message": "benchmark already exists", "id": benchmark_id},
+        )
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/api/test_benchmarks_api.py -q`
+
+Expected: 3 passed。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/api/routes/benchmarks.py tests/api/test_benchmarks_api.py
+git commit -m "fix: 重复基准集返回 409"
+```
+
+---
+
+### Task 6: FastAPI 托管前端构建产物
+
+**Files:**
+- Modify: `src/mofang/api/settings.py`
+- Modify: `src/mofang/api/app.py`
+- Modify: `src/mofang/cli.py`、`tests/test_cli.py`
+- Test: `tests/api/test_static.py`（新建）
+
+**Interfaces:**
+- Produces:
+  - `Settings.web_dir: Path | None`，默认 `Path("frontend/dist")`
+  - `Settings.from_env()` 读取 `MOFANG_WEB_DIR`；空字符串表示禁用
+  - `create_app()` 在 `web_dir/index.html` 存在时挂载 `/assets` 并提供 SPA 回退；`/api/*` 仍返回 JSON 404
+  - `mofang serve --web-dir`（默认 `frontend/dist`，空字符串禁用静态托管），`_serve()` 据此构造 `Settings`
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `tests/api/test_static.py`：
+
+```python
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from mofang.api.app import create_app
+from mofang.api.settings import Settings
+
+
+def test_serves_spa_and_keeps_api_404(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text(
+        "console.log(1)", encoding="utf-8"
+    )
+    app = create_app(
+        Settings(db_path=tmp_path / "t.db", web_dir=dist),
+        env={},
+    )
+    with TestClient(app) as client:
+        assert client.get("/runs/abc").text == "<html>app</html>"
+        assert client.get("/assets/app.js").text == "console.log(1)"
+        assert client.get("/api/nope").status_code == 404
+        assert client.get("/api/nope").headers["content-type"].startswith(
+            "application/json"
+        )
+        assert client.get("/openapi.json").status_code == 200
+
+
+def test_web_dir_from_env_can_be_disabled() -> None:
+    assert Settings.from_env({"MOFANG_WEB_DIR": ""}).web_dir is None
+    assert (
+        Settings.from_env({"MOFANG_WEB_DIR": "dist"}).web_dir
+        == Path("dist")
+    )
+```
+
+在 `tests/test_cli.py::test_serve_parser_defaults` 末尾补充：
+
+```python
+    assert args.web_dir == "frontend/dist"
+```
+
+并在 `tests/api/test_static.py` 末尾追加：
+
+```python
+def test_serve_parser_web_dir_override() -> None:
+    from mofang.cli import build_parser
+
+    args = build_parser().parse_args(["serve", "--web-dir", ""])
+    assert args.web_dir == ""
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/api/test_static.py tests/test_cli.py -q`
+
+Expected: FAIL，`Settings` 不接受 `web_dir`、`serve` 无 `--web-dir`。
+
+- [ ] **Step 3: 实现 settings、静态托管与 CLI 开关**
+
+`src/mofang/api/settings.py`：
+
+```python
+@dataclass(frozen=True)
+class Settings:
+    db_path: Path = Path("data/mofang.db")
+    table_path: Path = Path("data/cache/2x2_distances.pkl")
+    web_dir: Path | None = Path("frontend/dist")
+    host: str = "127.0.0.1"
+    port: int = 8000
+    cors_origins: tuple[str, ...] = (
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    )
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
+        values = os.environ if env is None else env
+        web_raw = values.get("MOFANG_WEB_DIR", "frontend/dist")
+        return cls(
+            db_path=Path(values.get("MOFANG_DB", "data/mofang.db")),
+            table_path=Path(
+                values.get("MOFANG_TABLE", "data/cache/2x2_distances.pkl")
+            ),
+            web_dir=Path(web_raw) if web_raw else None,
+            host=values.get("MOFANG_HOST", "127.0.0.1"),
+            port=int(values.get("MOFANG_PORT", "8000")),
+        )
+```
+
+`src/mofang/api/app.py`：
+
+```python
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+```
+
+在 `include_router` 之后：
+
+```python
+    web_dir = resolved.web_dir
+    if web_dir is not None and (web_dir / "index.html").is_file():
+        assets = web_dir / "assets"
+        if assets.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def spa(full_path: str):
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(404, "not found")
+            candidate = web_dir / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(web_dir / "index.html")
+```
+
+注意：catch-all 必须注册在 API 路由之后；`/docs`、`/openapi.json` 由 FastAPI 更早注册，仍可访问。
+
+`src/mofang/cli.py`，`serve` 子命令新增参数并传入 `Settings`：
+
+```python
+    serve.add_argument("--web-dir", default="frontend/dist")
+```
+
+```python
+def _serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .api.app import create_app
+    from .api.settings import Settings
+
+    settings = Settings(
+        db_path=Path(args.db),
+        table_path=Path(args.table),
+        web_dir=Path(args.web_dir) if args.web_dir else None,
+        host=args.host,
+        port=args.port,
+    )
+    uvicorn.run(create_app(settings), host=args.host, port=args.port)
+    return 0
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run: `uv run pytest tests/api/test_static.py tests/api/test_settings.py tests/test_cli.py -q`
+
+Expected: 全部通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mofang/api/settings.py src/mofang/api/app.py src/mofang/cli.py tests/api/test_static.py tests/test_cli.py
+git commit -m "feat: FastAPI 托管前端构建产物"
+```
+
+---
+
+### Task 7: 前端脚手架、类型与布局
+
+**Files:**
+- Create: `frontend/`（Vite React-TS 模板）
+- Modify: `frontend/package.json`、`frontend/vite.config.ts`、`frontend/src/main.tsx`、`frontend/src/App.tsx`、`frontend/src/index.css`
+- Create: `frontend/vitest.config.ts`、`frontend/src/test/setup.ts`
+- Create: `frontend/src/api/types.ts`
+- Create: `frontend/src/lib/format.ts`、`frontend/src/lib/format.test.ts`
+- Create: `frontend/src/components/Layout.tsx`
+- Create: `frontend/src/App.test.tsx`
+
+**Interfaces:**
+- Produces:
+  - 路由 `/providers`、`/benchmarks`、`/benchmarks/:id`、`/runs`、`/runs/new`、`/runs/:id`、`/episodes/:id`；`/` 重定向 `/runs`
+  - `types.ts` 中所有 API/SSE 类型（后续任务直接消费）
+  - `formatDuration`、`formatPercent`、`formatTokens`、`statusLabel`、`colorHex`、`shortId`
+
+- [ ] **Step 1: 生成脚手架并装依赖**
+
+Run:
+
+```bash
+npm create vite@latest frontend -- --template react-ts
+cd frontend
+npm install
+npm install react-router-dom @tanstack/react-query three @react-three/fiber @react-three/drei
+npm install -D tailwindcss @tailwindcss/vite vitest jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event @playwright/test
+```
+
+若 npm 报 React 19 与 r3f 的 peer 冲突，先确认 `@react-three/fiber` 版本 ≥9、`@react-three/drei` ≥10；仍冲突时在安装命令追加 `--legacy-peer-deps` 并在提交信息中记录原因。
+
+- [ ] **Step 2: 配置 Vite、Vitest 与脚本**
+
+`frontend/vite.config.ts` 整体替换为：
+
+```ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+})
+```
+
+新建 `frontend/vitest.config.ts`：
+
+```ts
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    css: false,
+  },
+})
+```
+
+新建 `frontend/src/test/setup.ts`：
+
+```ts
+import '@testing-library/jest-dom/vitest'
+import { cleanup } from '@testing-library/react'
+import { afterEach } from 'vitest'
+
+afterEach(() => {
+  cleanup()
+})
+```
+
+`frontend/package.json` 的 `scripts` 改为：
+
+```json
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "e2e": "playwright test"
+  },
+```
+
+- [ ] **Step 3: 写类型文件**
+
+新建 `frontend/src/api/types.ts`：
+
+```ts
+export type CubeKind = '2x2' | '3x3'
+export type Face = 'U' | 'R' | 'F' | 'D' | 'L' | 'B'
+export type ColorName =
+  | 'white'
+  | 'yellow'
+  | 'green'
+  | 'blue'
+  | 'red'
+  | 'orange'
+export type ToolMode = 'both' | 'turn_only' | 'batch_only'
+
+export interface CubeState {
+  cube: CubeKind
+  faces: Record<Face, ColorName[][]>
+}
+
+export interface Usage {
+  prompt_tokens: number
+  completion_tokens: number
+}
+
+export interface ProviderParams {
+  temperature?: number
+  max_tokens?: number
+  extra?: Record<string, unknown>
+}
+
+export interface Provider {
+  id: string
+  name: string
+  base_url: string
+  model: string
+  api_key_ref: string
+  params: ProviderParams
+  key_configured: boolean
+  created_at: string
+}
+
+export interface ProviderCreate {
+  name: string
+  base_url: string
+  model: string
+  api_key_ref: string
+  params: ProviderParams
+}
+
+export interface ProbeResult {
+  ok: boolean
+  tool_calling: boolean
+}
+
+export interface Task {
+  id: string
+  cube: CubeKind
+  scramble: string[]
+  scramble_depth: number
+  state: CubeState
+  reference_length: number
+  reference_kind: 'exact' | 'near_optimal' | 'fake'
+  bin: string
+}
+
+export interface BenchmarkSummary {
+  id: string
+  name: string
+  version: string
+  kind: string
+  cube: CubeKind
+  content_hash: string
+  frozen_at: string
+  task_count: number
+}
+
+export interface BenchmarkDetail extends BenchmarkSummary {
+  tasks: Task[]
+}
+
+export interface BenchmarkCreate {
+  name: string
+  cube: CubeKind
+  depths: number[]
+  per_depth: number
+  seed: number
+  solver: 'table' | 'rubik'
+}
+
+export interface Budget {
+  max_moves: number
+  max_tool_calls: number
+  max_tokens: number
+  max_seconds: number
+  turn_timeout: number
+  max_usd?: number | null
+}
+
+export interface AggregateTotals {
+  tasks: number
+  solved: number
+  solve_rate: number
+  ci95: [number, number]
+}
+
+export interface BinStats {
+  total: number
+  solved: number
+  solve_rate: number
+  ci95: [number, number]
+  mean_moves: number
+}
+
+export interface Run {
+  id: string
+  provider_id: string
+  benchmark_id: string
+  tool_mode: ToolMode
+  prompt_version: string
+  status: string
+  totals: Record<string, unknown> | null
+  error: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  budget: Budget
+}
+
+export interface Episode {
+  id: string
+  run_id: string
+  task_id: string
+  task_key: string
+  status: string
+  solved: boolean
+  moves_used: number
+  reference_length: number
+  efficiency: number | null
+  progress_ratio: number | null
+  protocol_errors: number
+  tokens_in: number | null
+  tokens_out: number | null
+  latency_ms: number | null
+  failure_code: string | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface Step {
+  id: string
+  seq: number
+  kind: string
+  tool_name: string | null
+  arguments: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  state: CubeState | null
+  reference_length_after: number | null
+}
+
+export interface Snapshot {
+  run: Run
+  episodes: Episode[]
+  last_event_id: number
+  current_state: CubeState | null
+}
+
+export interface Report {
+  run_id: string
+  provider_id: string
+  benchmark_id: string
+  status: string
+  started_at: string | null
+  finished_at: string | null
+  benchmark_hash: string | null
+  benchmark_total_tasks: number | null
+  partial: boolean
+  totals: AggregateTotals
+  by_bin: Record<string, BinStats>
+  episodes: Episode[]
+}
+
+export interface RunCreate {
+  provider_id: string
+  benchmark_id: string
+  tool_mode: ToolMode
+  params: Record<string, unknown>
+  budget: Partial<Budget>
+}
+
+export interface ProgressPoint {
+  moves: number
+  length: number | null
+}
+
+export interface RunEventBase<T extends string, D> {
+  id: number
+  type: T
+  run_id: string
+  episode_id: string | null
+  ts: string
+  data: D
+}
+
+export type RunEvent =
+  | RunEventBase<'run.started', { benchmark_id: string }>
+  | RunEventBase<
+      'episode.started',
+      { task_id: string; reference_length: number }
+    >
+  | RunEventBase<'model.turn.started', { moves_used: number }>
+  | RunEventBase<
+      'model.message',
+      { content: string | null; tool_calls: number; usage: Usage }
+    >
+  | RunEventBase<
+      'tool.call',
+      {
+        call_id: string
+        tool: string
+        arguments: Record<string, unknown> | null
+      }
+    >
+  | RunEventBase<
+      'tool.result',
+      {
+        call_id: string
+        tool: string
+        ok: boolean
+        payload: Record<string, unknown>
+      }
+    >
+  | RunEventBase<
+      'move.applied',
+      {
+        moves: string[]
+        state: CubeState
+        moves_used: number
+        solved: boolean
+        reference_length_after: number | null
+      }
+    >
+  | RunEventBase<
+      'episode.finished',
+      {
+        task_id: string
+        status: string
+        solved: boolean
+        moves_used: number
+      }
+    >
+  | RunEventBase<
+      'run.finished',
+      { status: string; totals: Record<string, unknown> | null }
+    >
+  | RunEventBase<'run.error', { message: string }>
+```
+
+- [ ] **Step 4: 写格式化工具与测试**
+
+新建 `frontend/src/lib/format.ts`：
+
+```ts
+import type { ColorName } from '../api/types'
+
+const COLOR_HEX: Record<ColorName, string> = {
+  white: '#f8fafc',
+  yellow: '#facc15',
+  green: '#22c55e',
+  blue: '#3b82f6',
+  red: '#ef4444',
+  orange: '#f97316',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  queued: '排队中',
+  running: '运行中',
+  finished: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+  interrupted: '已中断',
+  solved: '已解出',
+  stopped_unsolved: '停手未解',
+  budget_exceeded: '预算耗尽',
+  timeout: '超时',
+  protocol_error: '协议错误',
+  provider_error: 'provider 错误',
+}
+
+export function colorHex(color: ColorName): string {
+  return COLOR_HEX[color]
+}
+
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '—'
+  const total = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+export function formatPercent(
+  value: number | null | undefined,
+  digits = 1,
+): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return `${(value * 100).toFixed(digits)}%`
+}
+
+export function formatTokens(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`
+  return String(value)
+}
+
+export function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status
+}
+
+export function shortId(id: string): string {
+  return id.slice(0, 8)
+}
+```
+
+新建 `frontend/src/lib/format.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import {
+  colorHex,
+  formatDuration,
+  formatPercent,
+  formatTokens,
+  shortId,
+  statusLabel,
+} from './format'
+
+describe('format', () => {
+  it('formats durations', () => {
+    expect(formatDuration(65_000)).toBe('1:05')
+    expect(formatDuration(null)).toBe('—')
+  })
+
+  it('formats percentages and tokens', () => {
+    expect(formatPercent(0.5)).toBe('50.0%')
+    expect(formatPercent(null)).toBe('—')
+    expect(formatTokens(999)).toBe('999')
+    expect(formatTokens(12_500)).toBe('12.5k')
+    expect(formatTokens(1_200_000)).toBe('1.2M')
+  })
+
+  it('labels statuses and ids', () => {
+    expect(statusLabel('budget_exceeded')).toBe('预算耗尽')
+    expect(statusLabel('unknown')).toBe('unknown')
+    expect(shortId('abcdef123456')).toBe('abcdef12')
+  })
+
+  it('maps colors', () => {
+    expect(colorHex('white')).toBe('#f8fafc')
+    expect(colorHex('orange')).toBe('#f97316')
+  })
+})
+```
+
+- [ ] **Step 5: 写布局、路由与入口**
+
+新建 `frontend/src/components/Layout.tsx`：
+
+```tsx
+import { NavLink, Outlet } from 'react-router-dom'
+
+const links = [
+  { to: '/providers', label: 'Providers' },
+  { to: '/benchmarks', label: 'Benchmarks' },
+  { to: '/runs', label: 'Runs' },
+  { to: '/runs/new', label: 'New Run' },
+]
+
+export function Layout() {
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <header className="border-b border-slate-800 bg-slate-900/80">
+        <div className="mx-auto flex max-w-7xl items-center gap-6 px-6 py-3">
+          <span className="text-lg font-semibold tracking-wide">mofang</span>
+          <nav className="flex gap-4 text-sm">
+            {links.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                className={({ isActive }) =>
+                  isActive
+                    ? 'font-medium text-emerald-400'
+                    : 'text-slate-400 hover:text-slate-200'
+                }
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+      </header>
+      <main className="mx-auto max-w-7xl px-6 py-6">
+        <Outlet />
+      </main>
+    </div>
+  )
+}
+```
+
+`frontend/src/App.tsx` 整体替换为：
+
+```tsx
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { Layout } from './components/Layout'
+
+function Placeholder({ title }: { title: string }) {
+  return <h1 className="text-2xl font-semibold">{title}</h1>
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route index element={<Navigate to="/runs" replace />} />
+        <Route path="providers" element={<Placeholder title="Providers" />} />
+        <Route path="benchmarks" element={<Placeholder title="Benchmarks" />} />
+        <Route
+          path="benchmarks/:id"
+          element={<Placeholder title="Benchmark Detail" />}
+        />
+        <Route path="runs" element={<Placeholder title="Runs" />} />
+        <Route path="runs/new" element={<Placeholder title="New Run" />} />
+        <Route path="runs/:id" element={<Placeholder title="Run" />} />
+        <Route path="episodes/:id" element={<Placeholder title="Episode" />} />
+      </Route>
+    </Routes>
+  )
+}
+```
+
+`frontend/src/main.tsx` 整体替换为：
+
+```tsx
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { BrowserRouter } from 'react-router-dom'
+import App from './App'
+import './index.css'
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, staleTime: 5_000 },
+  },
+})
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </QueryClientProvider>
+  </StrictMode>,
+)
+```
+
+`frontend/src/index.css` 整体替换为：
+
+```css
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #020617;
+  color: #e2e8f0;
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+```
+
+新建 `frontend/src/App.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import App from './App'
+
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => [],
+    }),
+  )
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+describe('App routes', () => {
+  it('renders the providers page and navigation', () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/providers']}>
+          <App />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(
+      screen.getByRole('heading', { name: 'Providers' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 6: 运行前端验证**
+
+Run:
+
+```bash
+cd frontend
+npm run typecheck
+npm run test:run
+npm run build
+```
+
+Expected: 类型检查通过；4 个 format 测试 + 1 个路由测试通过；`dist/` 生成。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add frontend
+git commit -m "feat: 前端脚手架、类型与布局"
+```
+
+---
+
+### Task 8: API 客户端与查询 hooks
+
+**Files:**
+- Create: `frontend/src/api/client.ts`
+- Create: `frontend/src/api/client.test.ts`
+- Create: `frontend/src/api/queries.ts`
+
+**Interfaces:**
+- Consumes: `types.ts`（Task 7）
+- Produces:
+  - `ApiError(status, detail)`
+  - `api.providers.list/create/probe`
+  - `api.benchmarks.list/create/get`
+  - `api.runs.list/create/get/snapshot/cancel/report/eventsUrl`
+  - `api.episodes.get/steps`
+  - `exportUrl(runId, 'csv' | 'md')`、`reportUrl(runId)`
+  - `qk` 查询键与 `useProviders`、`useBenchmarks`、`useBenchmark`、`useRuns`、`useRun`、`useSnapshot`、`useEpisode`、`useSteps`、`useReport`
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/api/client.test.ts`：
+
+```ts
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  ApiError,
+  api,
+  exportUrl,
+  reportUrl,
+} from './client'
+import type { ProviderCreate } from './types'
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: String(status),
+    json: async () => body,
+  } as Response
+}
+
+const fetchMock = vi.fn()
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  fetchMock.mockReset()
+})
+
+describe('api client', () => {
+  it('GETs and parses JSON', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 'p1' }]))
+    const providers = await api.providers.list()
+    expect(providers).toEqual([{ id: 'p1' }])
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/providers')
+  })
+
+  it('POSTs JSON bodies', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'p1' }, 201))
+    const payload: ProviderCreate = {
+      name: 'local',
+      base_url: 'http://localhost:20128/v1',
+      model: 'm',
+      api_key_ref: 'LOCAL_KEY',
+      params: {},
+    }
+    await api.providers.create(payload)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/providers')
+    expect(init.method).toBe('POST')
+    expect(init.headers).toMatchObject({
+      'Content-Type': 'application/json',
+    })
+    expect(JSON.parse(init.body as string)).toEqual(payload)
+  })
+
+  it('normalizes structured errors', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          detail: {
+            message: 'benchmark already exists',
+            id: 'dup-2x2-3',
+          },
+        },
+        409,
+      ),
+    )
+    await expect(
+      api.benchmarks.create({
+        name: 'dup',
+        cube: '2x2',
+        depths: [1],
+        per_depth: 1,
+        seed: 3,
+        solver: 'table',
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      detail: expect.stringContaining('benchmark already exists'),
+    })
+  })
+
+  it('builds export and report urls', () => {
+    expect(exportUrl('r1', 'csv')).toBe('/api/runs/r1/export?format=csv')
+    expect(reportUrl('r1')).toBe('/api/runs/r1/report')
+    expect(api.runs.eventsUrl('r1', 7)).toBe(
+      '/api/runs/r1/events?after=7',
+    )
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/api/client.test.ts`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现客户端**
+
+新建 `frontend/src/api/client.ts`：
+
+```ts
+import type {
+  BenchmarkCreate,
+  BenchmarkDetail,
+  BenchmarkSummary,
+  Episode,
+  ProbeResult,
+  Provider,
+  ProviderCreate,
+  Report,
+  Run,
+  RunCreate,
+  Snapshot,
+  Step,
+} from './types'
+
+const API = '/api'
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    public detail: string,
+  ) {
+    super(detail)
+    this.name = 'ApiError'
+  }
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  })
+  if (!response.ok) {
+    let detail = response.statusText || `HTTP ${response.status}`
+    try {
+      const body = await response.json()
+      if (typeof body.detail === 'string') {
+        detail = body.detail
+      } else if (body.detail) {
+        detail = JSON.stringify(body.detail)
+      }
+    } catch {
+      // 非 JSON 错误体保留状态文本
+    }
+    throw new ApiError(response.status, detail)
+  }
+  return (await response.json()) as T
+}
+
+function post(body: unknown): RequestInit {
+  return { method: 'POST', body: JSON.stringify(body) }
+}
+
+export const api = {
+  providers: {
+    list: () => request<Provider[]>('/providers'),
+    create: (payload: ProviderCreate) =>
+      request<Provider>('/providers', post(payload)),
+    probe: (id: string) =>
+      request<ProbeResult>(`/providers/${id}/probe`, { method: 'POST' }),
+  },
+  benchmarks: {
+    list: () => request<BenchmarkSummary[]>('/benchmarks'),
+    create: (payload: BenchmarkCreate) =>
+      request<BenchmarkDetail>('/benchmarks', post(payload)),
+    get: (id: string) =>
+      request<BenchmarkDetail>(`/benchmarks/${id}`),
+  },
+  runs: {
+    list: () => request<Run[]>('/runs'),
+    create: (payload: RunCreate) =>
+      request<{ id: string }>('/runs', post(payload)),
+    get: (id: string) =>
+      request<{ run: Run; episodes: Episode[] }>(`/runs/${id}`),
+    snapshot: (id: string) =>
+      request<Snapshot>(`/runs/${id}/snapshot`),
+    cancel: (id: string) =>
+      request<{ cancelled: boolean }>(`/runs/${id}/cancel`, {
+        method: 'POST',
+      }),
+    report: (id: string) => request<Report>(`/runs/${id}/report`),
+    eventsUrl: (id: string, after = 0) =>
+      `${API}/runs/${id}/events?after=${after}`,
+  },
+  episodes: {
+    get: (id: string) => request<Episode>(`/episodes/${id}`),
+    steps: (id: string) => request<Step[]>(`/episodes/${id}/steps`),
+  },
+}
+
+export function exportUrl(runId: string, format: 'csv' | 'md'): string {
+  return `${API}/runs/${runId}/export?format=${format}`
+}
+
+export function reportUrl(runId: string): string {
+  return `${API}/runs/${runId}/report`
+}
+```
+
+- [ ] **Step 4: 实现查询 hooks**
+
+新建 `frontend/src/api/queries.ts`：
+
+```ts
+import { useQuery } from '@tanstack/react-query'
+import { api } from './client'
+
+export const qk = {
+  providers: ['providers'] as const,
+  benchmarks: ['benchmarks'] as const,
+  benchmark: (id: string) => ['benchmark', id] as const,
+  runs: ['runs'] as const,
+  run: (id: string) => ['run', id] as const,
+  snapshot: (id: string) => ['snapshot', id] as const,
+  episode: (id: string) => ['episode', id] as const,
+  steps: (id: string) => ['steps', id] as const,
+  report: (id: string) => ['report', id] as const,
+}
+
+export function useProviders() {
+  return useQuery({ queryKey: qk.providers, queryFn: api.providers.list })
+}
+
+export function useBenchmarks() {
+  return useQuery({ queryKey: qk.benchmarks, queryFn: api.benchmarks.list })
+}
+
+export function useBenchmark(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.benchmark(id ?? ''),
+    queryFn: () => api.benchmarks.get(id!),
+    enabled: Boolean(id),
+  })
+}
+
+export function useRuns() {
+  return useQuery({ queryKey: qk.runs, queryFn: api.runs.list })
+}
+
+export function useRun(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.run(id ?? ''),
+    queryFn: () => api.runs.get(id!),
+    enabled: Boolean(id),
+  })
+}
+
+export function useSnapshot(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.snapshot(id ?? ''),
+    queryFn: () => api.runs.snapshot(id!),
+    enabled: Boolean(id),
+  })
+}
+
+export function useEpisode(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.episode(id ?? ''),
+    queryFn: () => api.episodes.get(id!),
+    enabled: Boolean(id),
+  })
+}
+
+export function useSteps(id: string | undefined) {
+  return useQuery({
+    queryKey: qk.steps(id ?? ''),
+    queryFn: () => api.episodes.steps(id!),
+    enabled: Boolean(id),
+  })
+}
+
+export function useReport(id: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.report(id ?? ''),
+    queryFn: () => api.runs.report(id!),
+    enabled: Boolean(id) && enabled,
+  })
+}
+```
+
+- [ ] **Step 5: 运行测试与构建**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run
+npm run typecheck
+```
+
+Expected: 全部通过。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add frontend/src/api
+git commit -m "feat: API 类型之外的客户端与查询 hooks"
+```
+
+---
+
+```bash
+git add frontend/src/api
+git commit -m "feat: API 客户端与查询 hooks"
+```
+
+---
+
+### Task 9: Providers 页面
+
+**Files:**
+- Create: `frontend/src/pages/ProvidersPage.tsx`
+- Create: `frontend/src/pages/ProvidersPage.test.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `useProviders()`、`api.providers.create/probe`、`qk.providers`
+- Produces:
+  - `ProvidersView`（可测试的纯展示组件）
+  - `ProvidersPage`（容器，默认导出）
+  - `data-testid`：`provider-card`、`key-configured`
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/pages/ProvidersPage.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import type { Provider } from '../api/types'
+import { ProvidersView } from './ProvidersPage'
+
+const provider: Provider = {
+  id: 'p1',
+  name: 'local',
+  base_url: 'http://localhost:20128/v1',
+  model: 'gpt-oss',
+  api_key_ref: 'OPENAI_API_KEY',
+  params: { temperature: 0, max_tokens: 4096 },
+  key_configured: true,
+  created_at: '2026-10-26T00:00:00+00:00',
+}
+
+describe('ProvidersView', () => {
+  it('creates a provider with parsed params', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    const onProbe = vi.fn().mockResolvedValue({
+      ok: true,
+      tool_calling: true,
+    })
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+        onProbe={onProbe}
+      />,
+    )
+    await user.type(screen.getByLabelText('名称'), 'local')
+    await user.type(screen.getByLabelText('模型'), 'gpt-oss')
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(onCreate).toHaveBeenCalledWith({
+      name: 'local',
+      base_url: 'http://localhost:20128/v1',
+      model: 'gpt-oss',
+      api_key_ref: 'OPENAI_API_KEY',
+      params: {
+        temperature: 0,
+        max_tokens: 4096,
+        extra: {},
+      },
+    })
+  })
+
+  it('shows key state and probe result', async () => {
+    const user = userEvent.setup()
+    render(
+      <ProvidersView
+        providers={[provider]}
+        loading={false}
+        error={null}
+        onCreate={vi.fn()}
+        onProbe={vi.fn().mockResolvedValue({
+          ok: true,
+          tool_calling: true,
+        })}
+      />,
+    )
+    expect(screen.getByTestId('provider-card')).toHaveTextContent('local')
+    expect(screen.getByTestId('key-configured')).toHaveTextContent(
+      'key 已配置',
+    )
+    await user.click(screen.getByRole('button', { name: '探测' }))
+    expect(
+      await screen.findByText('支持 tool calling'),
+    ).toBeInTheDocument()
+  })
+
+  it('rejects invalid base_url and extra JSON', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+        onProbe={vi.fn()}
+      />,
+    )
+    const baseUrl = screen.getByLabelText('base_url')
+    await user.clear(baseUrl)
+    await user.type(baseUrl, 'ftp://bad')
+    await user.type(screen.getByLabelText('名称'), 'x')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'base_url 必须是 http(s)',
+    )
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/pages/ProvidersPage.test.tsx`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现页面**
+
+新建 `frontend/src/pages/ProvidersPage.tsx`：
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { api } from '../api/client'
+import { qk, useProviders } from '../api/queries'
+import type {
+  ProbeResult,
+  Provider,
+  ProviderCreate,
+} from '../api/types'
+
+const initialForm = {
+  name: '',
+  base_url: 'http://localhost:20128/v1',
+  model: '',
+  api_key_ref: 'OPENAI_API_KEY',
+  temperature: '0',
+  max_tokens: '4096',
+  extra: '{}',
+}
+
+export interface ProvidersViewProps {
+  providers: Provider[]
+  loading: boolean
+  error: string | null
+  onCreate: (payload: ProviderCreate) => Promise<void>
+  onProbe: (id: string) => Promise<ProbeResult>
+}
+
+export function ProvidersView({
+  providers,
+  loading,
+  error,
+  onCreate,
+  onProbe,
+}: ProvidersViewProps) {
+  const [form, setForm] = useState(initialForm)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [probes, setProbes] = useState<Record<string, string>>({})
+
+  function update(key: keyof typeof initialForm, value: string) {
+    setForm((current) => ({ ...current, [key]: value }))
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    if (
+      !form.base_url.startsWith('http://') &&
+      !form.base_url.startsWith('https://')
+    ) {
+      setFormError('base_url 必须是 http(s)')
+      return
+    }
+    let extra: Record<string, unknown>
+    try {
+      extra = JSON.parse(form.extra || '{}') as Record<string, unknown>
+    } catch {
+      setFormError('extra 必须是合法 JSON')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreate({
+        name: form.name,
+        base_url: form.base_url,
+        model: form.model,
+        api_key_ref: form.api_key_ref,
+        params: {
+          temperature: Number(form.temperature),
+          max_tokens: Number(form.max_tokens),
+          extra,
+        },
+      })
+      setForm(initialForm)
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleProbe(id: string) {
+    setProbes((current) => ({ ...current, [id]: '探测中…' }))
+    try {
+      const result = await onProbe(id)
+      setProbes((current) => ({
+        ...current,
+        [id]: result.tool_calling
+          ? '支持 tool calling'
+          : '不支持 tool calling',
+      }))
+    } catch (err) {
+      setProbes((current) => ({
+        ...current,
+        [id]: err instanceof Error ? err.message : String(err),
+      }))
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Providers</h1>
+      {error && (
+        <p className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300">
+          {error}
+        </p>
+      )}
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+      >
+        <label className="grid gap-1 text-sm">
+          <span>名称</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.name}
+            onChange={(event) => update('name', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>模型</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.model}
+            onChange={(event) => update('model', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm md:col-span-2">
+          <span>base_url</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.base_url}
+            onChange={(event) => update('base_url', event.target.value)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>API key 环境变量</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.api_key_ref}
+            onChange={(event) =>
+              update('api_key_ref', event.target.value)
+            }
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>temperature</span>
+          <input
+            type="number"
+            step="0.1"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.temperature}
+            onChange={(event) =>
+              update('temperature', event.target.value)
+            }
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>max_tokens</span>
+          <input
+            type="number"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.max_tokens}
+            onChange={(event) =>
+              update('max_tokens', event.target.value)
+            }
+          />
+        </label>
+        <label className="grid gap-1 text-sm md:col-span-2">
+          <span>extra JSON</span>
+          <textarea
+            className="rounded bg-slate-950 px-3 py-2 font-mono text-xs"
+            rows={2}
+            value={form.extra}
+            onChange={(event) => update('extra', event.target.value)}
+          />
+        </label>
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            保存 provider
+          </button>
+          {formError && (
+            <p role="alert" className="text-sm text-rose-300">
+              {formError}
+            </p>
+          )}
+        </div>
+      </form>
+
+      {loading ? (
+        <p className="text-sm text-slate-400">加载中…</p>
+      ) : providers.length === 0 ? (
+        <p className="text-sm text-slate-400">
+          还没有 provider。填写上方表单，环境变量名在启动服务前 export。
+        </p>
+      ) : (
+        <ul className="grid gap-3 md:grid-cols-2">
+          {providers.map((provider) => (
+            <li
+              key={provider.id}
+              data-testid="provider-card"
+              className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4 text-sm"
+            >
+              <div className="text-base font-medium">{provider.name}</div>
+              <div className="text-slate-400">
+                {provider.model} · {provider.base_url}
+              </div>
+              <div className="text-slate-500">
+                环境变量：{provider.api_key_ref}
+              </div>
+              <div className="flex items-center gap-3">
+                <span
+                  data-testid="key-configured"
+                  className={
+                    provider.key_configured
+                      ? 'text-emerald-400'
+                      : 'text-amber-400'
+                  }
+                >
+                  {provider.key_configured ? 'key 已配置' : 'key 未配置'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleProbe(provider.id)}
+                  className="rounded border border-slate-700 px-3 py-1"
+                >
+                  探测
+                </button>
+                {probes[provider.id] && (
+                  <span className="text-slate-300">{probes[provider.id]}</span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export default function ProvidersPage() {
+  const queryClient = useQueryClient()
+  const providers = useProviders()
+  const create = useMutation({
+    mutationFn: api.providers.create,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.providers }),
+  })
+  const probe = useMutation({ mutationFn: api.providers.probe })
+
+  return (
+    <ProvidersView
+      providers={providers.data ?? []}
+      loading={providers.isPending}
+      error={providers.error?.message ?? null}
+      onCreate={async (payload) => {
+        await create.mutateAsync(payload)
+      }}
+      onProbe={async (id) => probe.mutateAsync(id)}
+    />
+  )
+}
+```
+
+把 `frontend/src/App.tsx` 中 Providers 的占位路由替换为：
+
+```tsx
+import ProvidersPage from './pages/ProvidersPage'
+...
+        <Route path="providers" element={<ProvidersPage />} />
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/pages/ProvidersPage.test.tsx
+npm run typecheck
+```
+
+Expected: 3 passed；类型检查通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add frontend/src/pages/ProvidersPage.tsx frontend/src/pages/ProvidersPage.test.tsx frontend/src/App.tsx
+git commit -m "feat: Providers 页面"
+```
+
+---
+
+### Task 10: Benchmarks 列表、生成与详情
+
+**Files:**
+- Create: `frontend/src/pages/BenchmarksPage.tsx`
+- Create: `frontend/src/pages/BenchmarksPage.test.tsx`
+- Create: `frontend/src/pages/BenchmarkDetailPage.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `useBenchmarks()`、`useBenchmark(id)`、`api.benchmarks.create`、`qk.benchmarks`
+- Produces:
+  - `BenchmarksView`、`BenchmarkDetailView`
+  - `data-testid="benchmark-task-row"`
+  - 409 错误在表单内显示
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/pages/BenchmarksPage.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import type { BenchmarkDetail, BenchmarkSummary } from '../api/types'
+import {
+  BenchmarkDetailView,
+  BenchmarksView,
+} from './BenchmarksPage'
+
+const summary: BenchmarkSummary = {
+  id: 'demo-2x2-3',
+  name: 'demo',
+  version: 'v1',
+  kind: 'frozen',
+  cube: '2x2',
+  content_hash: 'abcdef123456',
+  frozen_at: '2026-10-26T00:00:00+00:00',
+  task_count: 1,
+}
+
+const detail: BenchmarkDetail = {
+  ...summary,
+  tasks: [
+    {
+      id: '2x2-1-1',
+      cube: '2x2',
+      scramble: ["R'"],
+      scramble_depth: 1,
+      state: {
+        cube: '2x2',
+        faces: {
+          U: [['white', 'white'], ['white', 'white']],
+          R: [['red', 'red'], ['red', 'red']],
+          F: [['green', 'green'], ['green', 'green']],
+          D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+          L: [['orange', 'orange'], ['orange', 'orange']],
+          B: [['blue', 'blue'], ['blue', 'blue']],
+        },
+      },
+      reference_length: 1,
+      reference_kind: 'exact',
+      bin: '1',
+    },
+  ],
+}
+
+describe('BenchmarksView', () => {
+  it('creates a 2x2 benchmark with table solver and rejects depth 20', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <BenchmarksView
+        benchmarks={[]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+      />,
+    )
+    expect(screen.getByLabelText('深度 20')).toBeDisabled()
+    await user.type(screen.getByLabelText('名称'), 'demo')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(
+      screen.getByRole('button', { name: '生成基准集' }),
+    )
+    expect(onCreate).toHaveBeenCalledWith({
+      name: 'demo',
+      cube: '2x2',
+      depths: [1],
+      per_depth: 2,
+      seed: 42,
+      solver: 'table',
+    })
+  })
+
+  it('shows a conflict error from the parent', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('benchmark already exists'))
+    render(
+      <BenchmarksView
+        benchmarks={[summary]}
+        loading={false}
+        error={null}
+        onCreate={onCreate}
+      />,
+    )
+    await user.type(screen.getByLabelText('名称'), 'dup')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(
+      screen.getByRole('button', { name: '生成基准集' }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'benchmark already exists',
+    )
+  })
+})
+
+describe('BenchmarkDetailView', () => {
+  it('renders task rows', () => {
+    render(<BenchmarkDetailView benchmark={detail} />)
+    expect(screen.getByTestId('benchmark-task-row')).toHaveTextContent(
+      '2x2-1-1',
+    )
+    expect(screen.getByText('exact')).toBeInTheDocument()
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/pages/BenchmarksPage.test.tsx`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现列表与生成**
+
+新建 `frontend/src/pages/BenchmarksPage.tsx`：
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { api } from '../api/client'
+import { qk, useBenchmarks } from '../api/queries'
+import type {
+  BenchmarkCreate,
+  BenchmarkDetail,
+  BenchmarkSummary,
+  CubeKind,
+} from '../api/types'
+import { shortId } from '../lib/format'
+
+const DEPTHS = [1, 2, 3, 5, 10, 20]
+
+const initialForm = {
+  name: '',
+  cube: '2x2' as CubeKind,
+  depths: [] as number[],
+  per_depth: '2',
+  seed: '42',
+}
+
+export interface BenchmarksViewProps {
+  benchmarks: BenchmarkSummary[]
+  loading: boolean
+  error: string | null
+  onCreate: (payload: BenchmarkCreate) => Promise<void>
+}
+
+export function BenchmarksView({
+  benchmarks,
+  loading,
+  error,
+  onCreate,
+}: BenchmarksViewProps) {
+  const [form, setForm] = useState(initialForm)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  function setCube(cube: CubeKind) {
+    setForm((current) => ({
+      ...current,
+      cube,
+      depths: current.depths.filter(
+        (depth) => cube === '3x3' || depth !== 20,
+      ),
+    }))
+  }
+
+  function toggleDepth(depth: number) {
+    if (form.cube === '2x2' && depth === 20) return
+    setForm((current) => ({
+      ...current,
+      depths: current.depths.includes(depth)
+        ? current.depths.filter((item) => item !== depth)
+        : [...current.depths, depth].sort((a, b) => a - b),
+    }))
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    if (form.depths.length === 0) {
+      setFormError('至少选择一个深度')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreate({
+        name: form.name,
+        cube: form.cube,
+        depths: form.depths,
+        per_depth: Number(form.per_depth),
+        seed: Number(form.seed),
+        solver: form.cube === '2x2' ? 'table' : 'rubik',
+      })
+      setForm(initialForm)
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Benchmarks</h1>
+      {error && (
+        <p className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300">
+          {error}
+        </p>
+      )}
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+      >
+        <label className="grid gap-1 text-sm">
+          <span>名称</span>
+          <input
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.name}
+            onChange={(event) =>
+              setForm({ ...form, name: event.target.value })
+            }
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>尺寸</span>
+          <select
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.cube}
+            onChange={(event) =>
+              setCube(event.target.value as CubeKind)
+            }
+          >
+            <option value="2x2">2x2</option>
+            <option value="3x3">3x3</option>
+          </select>
+        </label>
+        <div className="grid gap-1 text-sm md:col-span-2">
+          <span>打乱深度</span>
+          <div className="flex flex-wrap gap-3">
+            {DEPTHS.map((depth) => (
+              <label key={depth} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.depths.includes(depth)}
+                  disabled={form.cube === '2x2' && depth === 20}
+                  onChange={() => toggleDepth(depth)}
+                />
+                <span>深度 {depth}</span>
+              </label>
+            ))}
+          </div>
+          {form.cube === '3x3' && (
+            <p className="text-xs text-amber-400">
+              3x3 生成需要已构建 twophase 表，可能较慢。
+            </p>
+          )}
+        </div>
+        <label className="grid gap-1 text-sm">
+          <span>每档题数</span>
+          <input
+            type="number"
+            min={1}
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.per_depth}
+            onChange={(event) =>
+              setForm({ ...form, per_depth: event.target.value })
+            }
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>seed</span>
+          <input
+            type="number"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.seed}
+            onChange={(event) =>
+              setForm({ ...form, seed: event.target.value })
+            }
+          />
+        </label>
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            生成基准集
+          </button>
+          {formError && (
+            <p role="alert" className="text-sm text-rose-300">
+              {formError}
+            </p>
+          )}
+        </div>
+      </form>
+
+      {loading ? (
+        <p className="text-sm text-slate-400">加载中…</p>
+      ) : benchmarks.length === 0 ? (
+        <p className="text-sm text-slate-400">还没有基准集。</p>
+      ) : (
+        <ul className="space-y-2">
+          {benchmarks.map((benchmark) => (
+            <li
+              key={benchmark.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-800 bg-slate-900 p-4 text-sm"
+            >
+              <div>
+                <div className="font-medium">{benchmark.name}</div>
+                <div className="text-slate-400">
+                  {benchmark.id} · {benchmark.cube} ·{' '}
+                  {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)}
+                </div>
+              </div>
+              <a
+                className="text-emerald-400"
+                href={`/benchmarks/${benchmark.id}`}
+              >
+                查看详情
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export default function BenchmarksPage() {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const benchmarks = useBenchmarks()
+  const create = useMutation({
+    mutationFn: api.benchmarks.create,
+    onSuccess: (benchmark: BenchmarkDetail) => {
+      void queryClient.invalidateQueries({ queryKey: qk.benchmarks })
+      navigate(`/benchmarks/${benchmark.id}`)
+    },
+  })
+
+  return (
+    <BenchmarksView
+      benchmarks={benchmarks.data ?? []}
+      loading={benchmarks.isPending}
+      error={benchmarks.error?.message ?? null}
+      onCreate={async (payload) => {
+        await create.mutateAsync(payload)
+      }}
+    />
+  )
+}
+```
+
+新建 `frontend/src/pages/BenchmarkDetailPage.tsx`：
+
+```tsx
+import { Link, useParams } from 'react-router-dom'
+import { useBenchmark } from '../api/queries'
+import type { BenchmarkDetail } from '../api/types'
+
+export function BenchmarkDetailView({
+  benchmark,
+}: {
+  benchmark: BenchmarkDetail
+}) {
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">{benchmark.name}</h1>
+      <p className="text-sm text-slate-400">
+        {benchmark.id} · {benchmark.cube} · {benchmark.tasks.length} 题 ·
+        hash {benchmark.content_hash}
+      </p>
+      <table className="w-full border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-slate-800 text-left text-slate-400">
+            <th className="py-2">task</th>
+            <th>scramble</th>
+            <th>depth</th>
+            <th>reference</th>
+            <th>kind</th>
+            <th>bin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {benchmark.tasks.map((task) => (
+            <tr
+              key={task.id}
+              data-testid="benchmark-task-row"
+              className="border-b border-slate-900"
+            >
+              <td className="py-2">{task.id}</td>
+              <td>{task.scramble.join(' ')}</td>
+              <td>{task.scramble_depth}</td>
+              <td>{task.reference_length}</td>
+              <td>{task.reference_kind}</td>
+              <td>{task.bin}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="flex gap-4 text-sm">
+        <Link className="text-emerald-400" to="/benchmarks">
+          返回列表
+        </Link>
+        <Link
+          className="text-emerald-400"
+          to={`/runs/new?benchmark=${benchmark.id}`}
+        >
+          用此题集新建 run
+        </Link>
+      </div>
+    </div>
+  )
+}
+
+export default function BenchmarkDetailPage() {
+  const { id } = useParams()
+  const benchmark = useBenchmark(id)
+  if (benchmark.isPending) return <p>加载中…</p>
+  if (benchmark.error) {
+    return <p className="text-rose-300">{benchmark.error.message}</p>
+  }
+  if (!benchmark.data) return null
+  return <BenchmarkDetailView benchmark={benchmark.data} />
+}
+```
+
+把 `frontend/src/App.tsx` 中 Benchmarks 两个占位路由替换为：
+
+```tsx
+import BenchmarksPage from './pages/BenchmarksPage'
+import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
+...
+        <Route path="benchmarks" element={<BenchmarksPage />} />
+        <Route path="benchmarks/:id" element={<BenchmarkDetailPage />} />
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/pages/BenchmarksPage.test.tsx
+npm run typecheck
+```
+
+Expected: 3 passed；类型检查通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add frontend/src/pages/BenchmarksPage.tsx frontend/src/pages/BenchmarksPage.test.tsx frontend/src/pages/BenchmarkDetailPage.tsx frontend/src/App.tsx
+git commit -m "feat: Benchmarks 列表、生成与详情"
+```
+
+---
+
+### Task 11: New Run 与 Runs 历史
+
+**Files:**
+- Create: `frontend/src/pages/NewRunPage.tsx`
+- Create: `frontend/src/pages/NewRunPage.test.tsx`
+- Create: `frontend/src/pages/RunsPage.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `useProviders()`、`useBenchmarks()`、`useRuns()`、`api.runs.create`、`qk.runs`
+- Produces:
+  - `NewRunView`、`RunsView`
+  - 默认预算：2x2 `30/50/300000/300/120`，3x3 `100/150/1000000/900/120`
+  - `data-testid="run-row"`
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/pages/NewRunPage.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import type {
+  BenchmarkSummary,
+  Provider,
+  Run,
+} from '../api/types'
+import { NewRunView } from './NewRunPage'
+import { RunsView } from './RunsPage'
+
+const provider: Provider = {
+  id: 'p1',
+  name: 'local',
+  base_url: 'http://localhost/v1',
+  model: 'm',
+  api_key_ref: 'KEY',
+  params: {},
+  key_configured: true,
+  created_at: '2026-10-26T00:00:00+00:00',
+}
+
+const benchmarks: BenchmarkSummary[] = [
+  {
+    id: 'b2',
+    name: 'two',
+    version: 'v1',
+    kind: 'frozen',
+    cube: '2x2',
+    content_hash: 'h2',
+    frozen_at: '2026-10-26T00:00:00+00:00',
+    task_count: 1,
+  },
+  {
+    id: 'b3',
+    name: 'three',
+    version: 'v1',
+    kind: 'frozen',
+    cube: '3x3',
+    content_hash: 'h3',
+    frozen_at: '2026-10-26T00:00:00+00:00',
+    task_count: 1,
+  },
+]
+
+const run: Run = {
+  id: 'run12345678',
+  provider_id: 'p1',
+  benchmark_id: 'b2',
+  tool_mode: 'both',
+  prompt_version: 'v1',
+  status: 'finished',
+  totals: null,
+  error: null,
+  created_at: '2026-10-26T00:00:00+00:00',
+  started_at: null,
+  finished_at: null,
+  budget: {
+    max_moves: 30,
+    max_tool_calls: 50,
+    max_tokens: 300000,
+    max_seconds: 300,
+    turn_timeout: 120,
+  },
+}
+
+describe('NewRunView', () => {
+  it('uses 2x2 defaults and submits overrides', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <NewRunView
+        providers={[provider]}
+        benchmarks={benchmarks}
+        onCreate={onCreate}
+      />,
+    )
+    expect(screen.getByLabelText('max_moves')).toHaveValue(30)
+    await user.clear(screen.getByLabelText('max_moves'))
+    await user.type(screen.getByLabelText('max_moves'), '12')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider_id: 'p1',
+        benchmark_id: 'b2',
+        tool_mode: 'both',
+        budget: expect.objectContaining({ max_moves: 12 }),
+      }),
+    )
+  })
+
+  it('switches defaults when a 3x3 benchmark is selected', async () => {
+    const user = userEvent.setup()
+    render(
+      <NewRunView
+        providers={[provider]}
+        benchmarks={benchmarks}
+        onCreate={vi.fn()}
+      />,
+    )
+    await user.selectOptions(screen.getByLabelText('Benchmark'), 'b3')
+    expect(screen.getByLabelText('max_moves')).toHaveValue(100)
+    expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
+  })
+})
+
+describe('RunsView', () => {
+  it('maps provider and benchmark names', () => {
+    render(
+      <RunsView
+        runs={[run]}
+        providers={[provider]}
+        benchmarks={benchmarks}
+      />,
+    )
+    expect(screen.getByTestId('run-row')).toHaveTextContent('local')
+    expect(screen.getByTestId('run-row')).toHaveTextContent('two')
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/pages/NewRunPage.test.tsx`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现 New Run**
+
+新建 `frontend/src/pages/NewRunPage.tsx`：
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { api } from '../api/client'
+import { useBenchmarks, useProviders, qk } from '../api/queries'
+import type {
+  BenchmarkSummary,
+  Budget,
+  CubeKind,
+  Provider,
+  RunCreate,
+  ToolMode,
+} from '../api/types'
+
+const DEFAULTS: Record<CubeKind, Budget> = {
+  '2x2': {
+    max_moves: 30,
+    max_tool_calls: 50,
+    max_tokens: 300000,
+    max_seconds: 300,
+    turn_timeout: 120,
+  },
+  '3x3': {
+    max_moves: 100,
+    max_tool_calls: 150,
+    max_tokens: 1000000,
+    max_seconds: 900,
+    turn_timeout: 120,
+  },
+}
+
+export interface NewRunViewProps {
+  providers: Provider[]
+  benchmarks: BenchmarkSummary[]
+  onCreate: (payload: RunCreate) => Promise<void>
+}
+
+export function NewRunView({
+  providers,
+  benchmarks,
+  onCreate,
+}: NewRunViewProps) {
+  const [searchParams] = useSearchParams()
+  const requested = searchParams.get('benchmark')
+  const initialBenchmark =
+    benchmarks.find((item) => item.id === requested) ?? benchmarks[0]
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
+  const [benchmarkId, setBenchmarkId] = useState(
+    initialBenchmark?.id ?? '',
+  )
+  const [toolMode, setToolMode] = useState<ToolMode>('both')
+  const [budget, setBudget] = useState<Budget>(
+    DEFAULTS[initialBenchmark?.cube ?? '2x2'],
+  )
+  const [formError, setFormError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const selected = benchmarks.find((item) => item.id === benchmarkId)
+
+  useEffect(() => {
+    if (selected) setBudget(DEFAULTS[selected.cube])
+  }, [selected?.id, selected?.cube])
+
+  function updateBudget(key: keyof Budget, value: string) {
+    setBudget((current) => ({ ...current, [key]: Number(value) }))
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setFormError(null)
+    if (!providerId || !benchmarkId) {
+      setFormError('请选择 provider 和 benchmark')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await onCreate({
+        provider_id: providerId,
+        benchmark_id: benchmarkId,
+        tool_mode: toolMode,
+        params: {},
+        budget,
+      })
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">New Run</h1>
+      {providers.length === 0 && (
+        <p className="text-sm text-amber-300">
+          还没有 provider，先到 <Link to="/providers">Providers</Link> 配置。
+        </p>
+      )}
+      {benchmarks.length === 0 && (
+        <p className="text-sm text-amber-300">
+          还没有基准集，先到 <Link to="/benchmarks">Benchmarks</Link> 生成。
+        </p>
+      )}
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+      >
+        <label className="grid gap-1 text-sm">
+          <span>Provider</span>
+          <select
+            className="rounded bg-slate-950 px-3 py-2"
+            value={providerId}
+            onChange={(event) => setProviderId(event.target.value)}
+          >
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name} ({provider.model})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>Benchmark</span>
+          <select
+            className="rounded bg-slate-950 px-3 py-2"
+            value={benchmarkId}
+            onChange={(event) => setBenchmarkId(event.target.value)}
+          >
+            {benchmarks.map((benchmark) => (
+              <option key={benchmark.id} value={benchmark.id}>
+                {benchmark.name} ({benchmark.cube}, {benchmark.task_count} 题)
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span>工具模式</span>
+          <select
+            className="rounded bg-slate-950 px-3 py-2"
+            value={toolMode}
+            onChange={(event) =>
+              setToolMode(event.target.value as ToolMode)
+            }
+          >
+            <option value="both">both（turn + apply_moves）</option>
+            <option value="turn_only">turn only</option>
+            <option value="batch_only">apply_moves only</option>
+          </select>
+        </label>
+        <div className="grid gap-2 md:col-span-2">
+          <p className="text-sm text-slate-400">
+            预算上限（未配置价格，仅统计 tokens）
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {(
+              [
+                ['max_moves', '最大步数'],
+                ['max_seconds', '最长秒数'],
+                ['max_tool_calls', '工具调用'],
+                ['max_tokens', '最大 tokens'],
+                ['turn_timeout', '单轮超时'],
+              ] as const
+            ).map(([key, label]) => (
+              <label key={key} className="grid gap-1 text-xs">
+                <span>{key}</span>
+                <input
+                  aria-label={key}
+                  type="number"
+                  min={1}
+                  className="rounded bg-slate-950 px-2 py-1.5"
+                  value={budget[key] as number}
+                  onChange={(event) =>
+                    updateBudget(key, event.target.value)
+                  }
+                />
+                <span className="text-slate-500">{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 md:col-span-2">
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+          >
+            启动 run
+          </button>
+          {formError && (
+            <p role="alert" className="text-sm text-rose-300">
+              {formError}
+            </p>
+          )}
+        </div>
+      </form>
+    </div>
+  )
+}
+
+export default function NewRunPage() {
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const providers = useProviders()
+  const benchmarks = useBenchmarks()
+  const create = useMutation({
+    mutationFn: api.runs.create,
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: qk.runs })
+      navigate(`/runs/${data.id}`)
+    },
+  })
+
+  if (providers.isPending || benchmarks.isPending) {
+    return <p className="text-sm text-slate-400">加载中…</p>
+  }
+
+  return (
+    <NewRunView
+      providers={providers.data ?? []}
+      benchmarks={benchmarks.data ?? []}
+      onCreate={async (payload) => {
+        await create.mutateAsync(payload)
+      }}
+    />
+  )
+}
+```
+
+新建 `frontend/src/pages/RunsPage.tsx`：
+
+```tsx
+import { Link } from 'react-router-dom'
+import { useRuns, useProviders, useBenchmarks } from '../api/queries'
+import type {
+  BenchmarkSummary,
+  Provider,
+  Run,
+} from '../api/types'
+import { shortId, statusLabel } from '../lib/format'
+
+export interface RunsViewProps {
+  runs: Run[]
+  providers: Provider[]
+  benchmarks: BenchmarkSummary[]
+}
+
+export function RunsView({
+  runs,
+  providers,
+  benchmarks,
+}: RunsViewProps) {
+  const providerNames = new Map(
+    providers.map((provider) => [provider.id, provider.name]),
+  )
+  const benchmarkNames = new Map(
+    benchmarks.map((benchmark) => [benchmark.id, benchmark.name]),
+  )
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">Runs</h1>
+        <Link
+          className="rounded bg-emerald-600 px-4 py-2 text-sm text-white"
+          to="/runs/new"
+        >
+          New Run
+        </Link>
+      </div>
+      {runs.length === 0 ? (
+        <p className="text-sm text-slate-400">还没有运行记录。</p>
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-800 text-left text-slate-400">
+              <th className="py-2">run</th>
+              <th>provider</th>
+              <th>benchmark</th>
+              <th>状态</th>
+              <th>创建时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr
+                key={run.id}
+                data-testid="run-row"
+                className="border-b border-slate-900"
+              >
+                <td className="py-2">
+                  <Link
+                    className="text-emerald-400"
+                    to={`/runs/${run.id}`}
+                  >
+                    {shortId(run.id)}
+                  </Link>
+                </td>
+                <td>{providerNames.get(run.provider_id) ?? run.provider_id}</td>
+                <td>
+                  {benchmarkNames.get(run.benchmark_id) ?? run.benchmark_id}
+                </td>
+                <td>{statusLabel(run.status)}</td>
+                <td>{new Date(run.created_at).toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
+
+export default function RunsPage() {
+  const runs = useRuns()
+  const providers = useProviders()
+  const benchmarks = useBenchmarks()
+  if (runs.isPending) return <p>加载中…</p>
+  if (runs.error) {
+    return <p className="text-rose-300">{runs.error.message}</p>
+  }
+  return (
+    <RunsView
+      runs={runs.data ?? []}
+      providers={providers.data ?? []}
+      benchmarks={benchmarks.data ?? []}
+    />
+  )
+}
+```
+
+把 `frontend/src/App.tsx` 中相关占位路由替换为：
+
+```tsx
+import NewRunPage from './pages/NewRunPage'
+import RunsPage from './pages/RunsPage'
+...
+        <Route path="runs" element={<RunsPage />} />
+        <Route path="runs/new" element={<NewRunPage />} />
+```
+
+- [ ] **Step 4: 运行测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/pages/NewRunPage.test.tsx
+npm run typecheck
+```
+
+Expected: 3 passed；类型检查通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add frontend/src/pages/NewRunPage.tsx frontend/src/pages/NewRunPage.test.tsx frontend/src/pages/RunsPage.tsx frontend/src/App.tsx
+git commit -m "feat: New Run 与 Runs 历史页"
+```
+
+---
+
+### Task 12: 3D 纯函数（贴纸映射、走法、涂色）
+
+**Files:**
+- Create: `frontend/src/cube/facelets.ts`
+- Create: `frontend/src/cube/moves.ts`
+- Create: `frontend/src/cube/repaint.ts`
+- Test: `frontend/src/cube/facelets.test.ts`
+- Test: `frontend/src/cube/moves.test.ts`
+- Test: `frontend/src/cube/repaint.test.ts`
+
+**Interfaces:**
+- Produces:
+  - `Vec3`、`FACE_ORDER`、`FACE_FRAME`、`sizeOf(cube)`、`coord(i,size)`
+  - `stickerPlacement(face,row,col,size) -> {position, normal}`
+  - `slotKey(v)`、`cubieSlots(size)`
+  - `parseMove(move,size) -> MoveSpec`、`rotateVec`、`rotateSlot`、`layerSlots`
+  - `paintPlan(state) -> StickerPaint[]`、`paintForSlot`、`MATERIAL_NORMALS`、`materialIndex`
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/cube/facelets.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { cubieSlots, stickerPlacement } from './facelets'
+
+describe('facelets', () => {
+  it('maps 2x2 stickers to backend coordinates', () => {
+    expect(stickerPlacement('U', 0, 0, 2).position).toEqual([1, 1, 1])
+    expect(stickerPlacement('U', 1, 0, 2).position).toEqual([1, 1, -1])
+    expect(stickerPlacement('R', 0, 0, 2).position).toEqual([1, 1, -1])
+    expect(stickerPlacement('F', 0, 0, 2).position).toEqual([-1, 1, 1])
+  })
+
+  it('maps 3x3 stickers to backend coordinates', () => {
+    expect(stickerPlacement('U', 0, 0, 3).position).toEqual([-2, 2, -2])
+    expect(stickerPlacement('U', 2, 2, 3).position).toEqual([2, 2, 2])
+    expect(stickerPlacement('R', 0, 0, 3).position).toEqual([2, 2, 2])
+    expect(stickerPlacement('F', 0, 0, 3).position).toEqual([-2, 2, 2])
+    expect(stickerPlacement('D', 2, 2, 3).position).toEqual([2, -2, -2])
+    expect(stickerPlacement('B', 0, 0, 3).position).toEqual([2, 2, -2])
+  })
+
+  it('builds cubie slots without the 3x3 core', () => {
+    expect(cubieSlots(2)).toHaveLength(8)
+    expect(cubieSlots(3)).toHaveLength(26)
+    expect(cubieSlots(3)).not.toContainEqual([0, 0, 0])
+  })
+})
+```
+
+新建 `frontend/src/cube/moves.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { layerSlots, parseMove, rotateSlot } from './moves'
+
+describe('moves', () => {
+  it('parses R variants', () => {
+    expect(parseMove('R', 2)).toEqual({
+      face: 'R',
+      amount: 1,
+      axis: 0,
+      sign: 1,
+      layer: 1,
+      turns: 3,
+    })
+    expect(parseMove("R'", 2).turns).toBe(1)
+    expect(parseMove('R2', 2).turns).toBe(2)
+  })
+
+  it('rejects malformed moves', () => {
+    expect(() => parseMove('X', 2)).toThrow('invalid move')
+    expect(() => parseMove('R3', 2)).toThrow('invalid move')
+  })
+
+  it('rotates slots like the backend', () => {
+    expect(rotateSlot([1, 1, 1], parseMove('R', 2))).toEqual([1, 1, -1])
+    expect(rotateSlot([1, 1, 1], parseMove('U', 2))).toEqual([-1, 1, 1])
+    expect(rotateSlot([-1, 1, 1], parseMove('F', 2))).toEqual([1, 1, 1])
+  })
+
+  it('selects the layer for a move', () => {
+    const slots: [number, number, number][] = [
+      [1, 1, 1],
+      [1, 1, -1],
+      [-1, 1, 1],
+      [-1, 1, -1],
+    ]
+    expect(layerSlots(slots, parseMove('R', 2))).toEqual([
+      [1, 1, 1],
+      [1, 1, -1],
+    ])
+  })
+})
+```
+
+新建 `frontend/src/cube/repaint.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { CubeState } from '../api/types'
+import {
+  materialIndex,
+  paintForSlot,
+  paintPlan,
+} from './repaint'
+
+function solved2x2(): CubeState {
+  return {
+    cube: '2x2',
+    faces: {
+      U: [['white', 'white'], ['white', 'white']],
+      R: [['red', 'red'], ['red', 'red']],
+      F: [['green', 'green'], ['green', 'green']],
+      D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+      L: [['orange', 'orange'], ['orange', 'orange']],
+      B: [['blue', 'blue'], ['blue', 'blue']],
+    },
+  }
+}
+
+const afterR: CubeState = {
+  cube: '2x2',
+  faces: {
+    U: [['white', 'green'], ['white', 'green']],
+    R: [['red', 'red'], ['red', 'red']],
+    F: [['green', 'yellow'], ['green', 'yellow']],
+    D: [['yellow', 'blue'], ['yellow', 'blue']],
+    L: [['orange', 'orange'], ['orange', 'orange']],
+    B: [['white', 'blue'], ['white', 'blue']],
+  },
+}
+
+describe('repaint', () => {
+  it('paints solved 2x2 corner colors', () => {
+    const paints = paintPlan(solved2x2())
+    expect(paints).toHaveLength(24)
+    const colors = paintForSlot(paints, '1,1,1')
+    expect(colors.get(materialIndex([1, 0, 0]))).toBe('red')
+    expect(colors.get(materialIndex([0, 1, 0]))).toBe('white')
+    expect(colors.get(materialIndex([0, 0, 1]))).toBe('green')
+  })
+
+  it('paints the state after R', () => {
+    const colors = paintForSlot(paintPlan(afterR), '1,1,1')
+    expect(colors.get(materialIndex([1, 0, 0]))).toBe('red')
+    expect(colors.get(materialIndex([0, 1, 0]))).toBe('green')
+    expect(colors.get(materialIndex([0, 0, 1]))).toBe('yellow')
+  })
+
+  it('maps all six material normals', () => {
+    expect(materialIndex([1, 0, 0])).toBe(0)
+    expect(materialIndex([-1, 0, 0])).toBe(1)
+    expect(materialIndex([0, 1, 0])).toBe(2)
+    expect(materialIndex([0, -1, 0])).toBe(3)
+    expect(materialIndex([0, 0, 1])).toBe(4)
+    expect(materialIndex([0, 0, -1])).toBe(5)
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/cube
+```
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现 facelets**
+
+新建 `frontend/src/cube/facelets.ts`：
+
+```ts
+import type { CubeKind, Face } from '../api/types'
+
+export type Vec3 = [number, number, number]
+
+export const FACE_ORDER: Face[] = ['U', 'R', 'F', 'D', 'L', 'B']
+
+export const FACE_FRAME: Record<
+  Face,
+  { normal: Vec3; right: Vec3; up: Vec3 }
+> = {
+  U: { normal: [0, 1, 0], right: [1, 0, 0], up: [0, 0, -1] },
+  R: { normal: [1, 0, 0], right: [0, 0, -1], up: [0, 1, 0] },
+  F: { normal: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0] },
+  D: { normal: [0, -1, 0], right: [1, 0, 0], up: [0, 0, 1] },
+  L: { normal: [-1, 0, 0], right: [0, 0, 1], up: [0, 1, 0] },
+  B: { normal: [0, 0, -1], right: [-1, 0, 0], up: [0, 1, 0] },
+}
+
+export function sizeOf(cube: CubeKind): 2 | 3 {
+  return cube === '2x2' ? 2 : 3
+}
+
+export function coord(index: number, size: number): number {
+  return 2 * index - (size - 1)
+}
+
+export function stickerPlacement(
+  face: Face,
+  row: number,
+  col: number,
+  size: number,
+): { position: Vec3; normal: Vec3 } {
+  const { normal, right, up } = FACE_FRAME[face]
+  const depth = size - 1 - row
+  return {
+    position: [
+      normal[0] * (size - 1) +
+        right[0] * coord(col, size) +
+        up[0] * coord(depth, size),
+      normal[1] * (size - 1) +
+        right[1] * coord(col, size) +
+        up[1] * coord(depth, size),
+      normal[2] * (size - 1) +
+        right[2] * coord(col, size) +
+        up[2] * coord(depth, size),
+    ],
+    normal,
+  }
+}
+
+export function slotKey(slot: Vec3): string {
+  return `${slot[0]},${slot[1]},${slot[2]}`
+}
+
+export function cubieSlots(size: number): Vec3[] {
+  const values = Array.from({ length: size }, (_, index) =>
+    coord(index, size),
+  )
+  const slots: Vec3[] = []
+  for (const x of values) {
+    for (const y of values) {
+      for (const z of values) {
+        if (size === 3 && x === 0 && y === 0 && z === 0) continue
+        slots.push([x, y, z])
+      }
+    }
+  }
+  return slots
+}
+```
+
+- [ ] **Step 4: 实现 moves**
+
+新建 `frontend/src/cube/moves.ts`：
+
+```ts
+import type { Face } from '../api/types'
+import { FACE_FRAME, FACE_ORDER, type Vec3 } from './facelets'
+
+export interface MoveSpec {
+  face: Face
+  amount: 1 | 2 | 3
+  axis: 0 | 1 | 2
+  sign: 1 | -1
+  layer: number
+  turns: number
+}
+
+export function parseMove(move: string, size: number): MoveSpec {
+  const face = move[0] as Face
+  if (!FACE_ORDER.includes(face)) {
+    throw new Error(`invalid move: ${move}`)
+  }
+  const suffix = move.slice(1)
+  const amount = suffix === '' ? 1 : suffix === '2' ? 2 : suffix === "'" ? 3 : 0
+  if (amount === 0) {
+    throw new Error(`invalid move: ${move}`)
+  }
+  const normal = FACE_FRAME[face].normal
+  const axis = normal.findIndex((value) => value !== 0) as 0 | 1 | 2
+  const sign = normal[axis] as 1 | -1
+  return {
+    face,
+    amount,
+    axis,
+    sign,
+    layer: sign * (size - 1),
+    turns: ((-sign * amount) % 4 + 4) % 4,
+  }
+}
+
+export function rotateVec(
+  value: Vec3,
+  axis: 0 | 1 | 2,
+  quarterTurns: number,
+): Vec3 {
+  let [x, y, z] = value
+  const turns = ((quarterTurns % 4) + 4) % 4
+  for (let index = 0; index < turns; index += 1) {
+    if (axis === 0) {
+      ;[y, z] = [-z, y]
+    } else if (axis === 1) {
+      ;[x, z] = [z, -x]
+    } else {
+      ;[x, y] = [-y, x]
+    }
+  }
+  return [x, y, z]
+}
+
+export function rotateSlot(slot: Vec3, spec: MoveSpec): Vec3 {
+  return rotateVec(slot, spec.axis, spec.turns)
+}
+
+export function layerSlots(slots: Vec3[], spec: MoveSpec): Vec3[] {
+  return slots.filter((slot) => slot[spec.axis] === spec.layer)
+}
+```
+
+- [ ] **Step 5: 实现涂色计划**
+
+新建 `frontend/src/cube/repaint.ts`：
+
+```ts
+import type { CubeState, ColorName } from '../api/types'
+import {
+  FACE_ORDER,
+  sizeOf,
+  slotKey,
+  stickerPlacement,
+  type Vec3,
+} from './facelets'
+
+export const MATERIAL_NORMALS: Vec3[] = [
+  [1, 0, 0],
+  [-1, 0, 0],
+  [0, 1, 0],
+  [0, -1, 0],
+  [0, 0, 1],
+  [0, 0, -1],
+]
+
+export interface StickerPaint {
+  slot: string
+  normal: Vec3
+  color: ColorName
+}
+
+export function materialIndex(normal: Vec3): number {
+  return MATERIAL_NORMALS.findIndex(
+    (candidate) =>
+      candidate[0] === normal[0] &&
+      candidate[1] === normal[1] &&
+      candidate[2] === normal[2],
+  )
+}
+
+export function paintPlan(state: CubeState): StickerPaint[] {
+  const size = sizeOf(state.cube)
+  const paints: StickerPaint[] = []
+  for (const face of FACE_ORDER) {
+    for (let row = 0; row < size; row += 1) {
+      for (let col = 0; col < size; col += 1) {
+        const { position, normal } = stickerPlacement(
+          face,
+          row,
+          col,
+          size,
+        )
+        paints.push({
+          slot: slotKey(position),
+          normal,
+          color: state.faces[face][row][col],
+        })
+      }
+    }
+  }
+  return paints
+}
+
+export function paintForSlot(
+  paints: StickerPaint[],
+  slot: string,
+): Map<number, ColorName> {
+  const result = new Map<number, ColorName>()
+  for (const paint of paints) {
+    if (paint.slot === slot) {
+      result.set(materialIndex(paint.normal), paint.color)
+    }
+  }
+  return result
+}
+```
+
+- [ ] **Step 6: 运行测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/cube
+npm run typecheck
+```
+
+Expected: 10 项左右全部通过；类型检查通过。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add frontend/src/cube
+git commit -m "feat: 3D 贴纸映射、走法与涂色纯函数"
+```
+
+---
+
+### Task 13: CubeView 与动画队列
+
+**Files:**
+- Create: `frontend/src/cube/CubeView.tsx`
+
+**Interfaces:**
+- Consumes: Task 12 的全部纯函数；`colorHex`、`slotKey`、`paintPlan`、`materialIndex`、`parseMove`、`rotateSlot`、`layerSlots`、`cubieSlots`。
+- Produces:
+  - `CubeView` 组件，props：
+    ```ts
+    {
+      state: CubeState | null
+      resetToken: number
+      batch: { eventId: number; moves: string[]; state: CubeState } | null
+      speed: number        // 0.5 / 1 / 2 / 100（instant）
+      paused: boolean
+      skipToken: number
+    }
+    ```
+  - `data-testid="cube-canvas"`
+
+本任务没有 WebGL 单元测试；动画数学已由 Task 12 覆盖，渲染由 M3 E2E 与手动运行验证。实现后先做 `npm run typecheck` 与 `npm run build`。
+
+- [ ] **Step 1: 实现 CubeView**
+
+新建 `frontend/src/cube/CubeView.tsx`：
+
+```tsx
+import { OrbitControls } from '@react-three/drei'
+import { Canvas, useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef } from 'react'
+import * as THREE from 'three'
+import type { CubeState } from '../api/types'
+import { colorHex } from '../lib/format'
+import {
+  cubieSlots,
+  sizeOf,
+  slotKey,
+  type Vec3,
+} from './facelets'
+import { layerSlots, parseMove, rotateSlot } from './moves'
+import {
+  MATERIAL_NORMALS,
+  materialIndex,
+  paintPlan,
+} from './repaint'
+import type { MoveSpec } from './moves'
+
+const CUBIE_SIZE = 0.94
+const DARK = '#0f172a'
+const UNIT = 0.5
+
+export interface MoveBatch {
+  eventId: number
+  moves: string[]
+  state: CubeState
+}
+
+export interface CubeViewProps {
+  state: CubeState | null
+  resetToken: number
+  batch: MoveBatch | null
+  speed: number
+  paused: boolean
+  skipToken: number
+}
+
+interface Entry {
+  index: number
+  mesh: THREE.Mesh
+  materials: THREE.MeshStandardMaterial[]
+  slot: Vec3
+}
+
+interface CurrentMove {
+  batch: MoveBatch
+  moveIndex: number
+  spec: MoveSpec
+  elapsed: number
+  duration: number
+  entries: Entry[]
+}
+
+function axisVector(axis: 0 | 1 | 2): THREE.Vector3 {
+  return new THREE.Vector3(
+    axis === 0 ? 1 : 0,
+    axis === 1 ? 1 : 0,
+    axis === 2 ? 1 : 0,
+  )
+}
+
+function Scene(props: CubeViewProps) {
+  const size = props.state ? sizeOf(props.state.cube) : 2
+  const slots = useMemo(() => cubieSlots(size), [size])
+  const group = useRef<THREE.Group>(null!)
+  const entries = useRef<Entry[]>([])
+  const queue = useRef<MoveBatch[]>([])
+  const current = useRef<CurrentMove | null>(null)
+  const paused = useRef(props.paused)
+  const speed = useRef(props.speed)
+  const latestTarget = useRef<CubeState | null>(props.state)
+
+  useEffect(() => {
+    paused.current = props.paused
+  }, [props.paused])
+
+  useEffect(() => {
+    speed.current = props.speed
+  }, [props.speed])
+
+  function repaint(state: CubeState) {
+    const plans = new Map<string, Map<number, string>>()
+    for (const paint of paintPlan(state)) {
+      let slotPlan = plans.get(paint.slot)
+      if (!slotPlan) {
+        slotPlan = new Map()
+        plans.set(paint.slot, slotPlan)
+      }
+      slotPlan.set(materialIndex(paint.normal), paint.color)
+    }
+    for (const entry of entries.current) {
+      const slotPlan = plans.get(slotKey(entry.slot))
+      entry.materials.forEach((material, index) => {
+        const color = slotPlan?.get(index)
+        material.color.set(color ? colorHex(color) : DARK)
+      })
+    }
+  }
+
+  function place(entry: Entry, slot: Vec3) {
+    entry.slot = slot
+    entry.mesh.position.set(slot[0] * UNIT, slot[1] * UNIT, slot[2] * UNIT)
+    entry.mesh.quaternion.identity()
+  }
+
+  function snapTo(state: CubeState | null) {
+    queue.current = []
+    current.current = null
+    latestTarget.current = state
+    entries.current.forEach((entry) => {
+      place(entry, slots[entry.index])
+    })
+    if (state) repaint(state)
+  }
+
+  useEffect(() => {
+    if (!group.current) return
+    const built: Entry[] = slots.map((slot, index) => {
+      const geometry = new THREE.BoxGeometry(
+        CUBIE_SIZE,
+        CUBIE_SIZE,
+        CUBIE_SIZE,
+      )
+      const materials = MATERIAL_NORMALS.map(
+        () =>
+          new THREE.MeshStandardMaterial({
+            color: DARK,
+            roughness: 0.45,
+            metalness: 0,
+          }),
+      )
+      const mesh = new THREE.Mesh(geometry, materials)
+      mesh.position.set(slot[0] * UNIT, slot[1] * UNIT, slot[2] * UNIT)
+      group.current!.add(mesh)
+      return { index, mesh, materials, slot }
+    })
+    entries.current = built
+    if (latestTarget.current) repaint(latestTarget.current)
+    return () => {
+      for (const entry of built) {
+        group.current?.remove(entry.mesh)
+        entry.mesh.geometry.dispose()
+        entry.materials.forEach((material) => material.dispose())
+      }
+      entries.current = []
+    }
+  }, [slots])
+
+  useEffect(() => {
+    if (props.state) {
+      latestTarget.current = props.state
+      snapTo(props.state)
+    }
+  }, [props.resetToken, props.state])
+
+  useEffect(() => {
+    if (props.batch) {
+      latestTarget.current = props.batch.state
+      queue.current.push(props.batch)
+    }
+  }, [props.batch])
+
+  useEffect(() => {
+    if (props.skipToken > 0) {
+      snapTo(latestTarget.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.skipToken])
+
+  function startNextMove() {
+    const batch = queue.current[0]
+    if (!batch) return
+    const spec = parseMove(batch.moves[0], sizeOf(batch.state.cube))
+    const keys = new Set(
+      layerSlots(
+        entries.current.map((entry) => entry.slot),
+        spec,
+      ).map(slotKey),
+    )
+    current.current = {
+      batch,
+      moveIndex: 0,
+      spec,
+      elapsed: 0,
+      duration: speed.current >= 100 ? 0 : 220 / speed.current,
+      entries: entries.current.filter((entry) =>
+        keys.has(slotKey(entry.slot)),
+      ),
+    }
+  }
+
+  function startMove(
+    batch: MoveBatch,
+    moveIndex: number,
+  ): CurrentMove {
+    const spec = parseMove(batch.moves[moveIndex], sizeOf(batch.state.cube))
+    const keys = new Set(
+      layerSlots(
+        entries.current.map((entry) => entry.slot),
+        spec,
+      ).map(slotKey),
+    )
+    return {
+      batch,
+      moveIndex,
+      spec,
+      elapsed: 0,
+      duration: speed.current >= 100 ? 0 : 220 / speed.current,
+      entries: entries.current.filter((entry) =>
+        keys.has(slotKey(entry.slot)),
+      ),
+    }
+  }
+
+  function finishMove(move: CurrentMove) {
+    for (const entry of move.entries) {
+      place(entry, rotateSlot(entry.slot, move.spec))
+    }
+    const nextIndex = move.moveIndex + 1
+    if (nextIndex < move.batch.moves.length) {
+      current.current = startMove(move.batch, nextIndex)
+      return
+    }
+    queue.current.shift()
+    current.current = null
+    repaint(move.batch.state)
+  }
+
+  useFrame((_, delta) => {
+    if (paused.current) return
+    if (!current.current) {
+      if (queue.current.length === 0) return
+      startNextMove()
+      if (!current.current) return
+    }
+    const move = current.current
+    if (move.duration <= 0) {
+      finishMove(move)
+      return
+    }
+    move.elapsed += delta * 1000
+    const progress = Math.min(1, move.elapsed / move.duration)
+    const eased = progress * progress * (3 - 2 * progress)
+    const angle = ((move.spec.turns * Math.PI) / 2) * eased
+    const axis = axisVector(move.spec.axis)
+    for (const entry of move.entries) {
+      entry.mesh.quaternion.setFromAxisAngle(axis, angle)
+    }
+    if (progress >= 1) finishMove(move)
+  })
+
+  return (
+    <>
+      <ambientLight intensity={0.85} />
+      <directionalLight position={[5, 8, 6]} intensity={1.5} />
+      <directionalLight position={[-5, -4, -6]} intensity={0.55} />
+      <group ref={group} />
+      <OrbitControls
+        enablePan={false}
+        minDistance={4}
+        maxDistance={14}
+        enableDamping
+      />
+    </>
+  )
+}
+
+export function CubeView(props: CubeViewProps) {
+  const size = props.state ? sizeOf(props.state.cube) : 2
+  return (
+    <div data-testid="cube-canvas" className="h-[420px] w-full">
+      <Canvas
+        camera={{
+          position: size === 2 ? [3.2, 3.2, 4.2] : [5, 5, 6.5],
+          fov: 45,
+        }}
+      >
+        <Scene {...props} key={size} />
+      </Canvas>
+    </div>
+  )
+}
+```
+
+- [ ] **Step 2: 类型检查与构建**
+
+Run:
+
+```bash
+cd frontend
+npm run typecheck
+npm run build
+```
+
+Expected: 通过。若 `panel`/JSX 类型报错，确认 `@react-three/fiber` 版本 ≥9 且 `three` 类型已随包提供；不要把 `three` 降到 r150 之前。
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add frontend/src/cube/CubeView.tsx
+git commit -m "feat: 3D cube 视图与动画队列"
+```
+
+---
+
+### Task 14: 实时事件 reducer 与 useRunEvents
+
+**Files:**
+- Create: `frontend/src/hooks/liveReducer.ts`
+- Create: `frontend/src/hooks/liveReducer.test.ts`
+- Create: `frontend/src/hooks/useRunEvents.ts`
+- Create: `frontend/src/hooks/useRunEvents.test.tsx`
+
+**Interfaces:**
+- Consumes: `RunEvent`、`Snapshot`、`Episode`、`CubeState`、`api.runs.snapshot`、`api.runs.eventsUrl`
+- Produces:
+  - `liveReducer(state, action)`
+  - `LiveState`：run、episodes、currentEpisode、logs、usage、progress、lastEventId、connection、latestBatch、firstInvalidCall、error、snapshotState、snapshotToken、episodeToken
+  - `useRunEvents(runId) -> LiveState`
+
+- [ ] **Step 1: 写 reducer 失败测试**
+
+新建 `frontend/src/test/fixtures.ts`：
+
+```ts
+import type { Episode, Run } from '../api/types'
+
+export function makeRun(overrides: Partial<Run> = {}): Run {
+  return {
+    id: 'r1',
+    provider_id: 'p1',
+    benchmark_id: 'b1',
+    tool_mode: 'both',
+    prompt_version: 'v1',
+    status: 'running',
+    totals: null,
+    error: null,
+    created_at: '2026-10-26T00:00:00+00:00',
+    started_at: '2026-10-26T00:00:01+00:00',
+    finished_at: null,
+    budget: {
+      max_moves: 30,
+      max_tool_calls: 50,
+      max_tokens: 300000,
+      max_seconds: 300,
+      turn_timeout: 120,
+    },
+    ...overrides,
+  }
+}
+
+export function makeEpisode(overrides: Partial<Episode> = {}): Episode {
+  return {
+    id: 'e1',
+    run_id: 'r1',
+    task_id: 'b1:t1',
+    task_key: 't1',
+    status: 'running',
+    solved: false,
+    moves_used: 0,
+    reference_length: 1,
+    efficiency: null,
+    progress_ratio: null,
+    protocol_errors: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    latency_ms: null,
+    failure_code: null,
+    error: null,
+    started_at: '2026-10-26T00:00:02+00:00',
+    finished_at: null,
+    ...overrides,
+  }
+}
+```
+
+新建 `frontend/src/hooks/liveReducer.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import type { RunEvent } from '../api/types'
+import { makeEpisode, makeRun } from '../test/fixtures'
+import {
+  initialLiveState,
+  liveReducer,
+  type LiveAction,
+} from './liveReducer'
+
+function event<T extends RunEvent['type']>(
+  type: T,
+  data: unknown,
+  id = 1,
+  episodeId: string | null = 'e1',
+): RunEvent {
+  return {
+    id,
+    type,
+    run_id: 'r1',
+    episode_id: episodeId,
+    ts: '2026-10-26T00:00:03+00:00',
+    data,
+  } as RunEvent
+}
+
+function apply(state = initialLiveState(), action: LiveAction) {
+  return liveReducer(state, action)
+}
+
+describe('liveReducer', () => {
+  it('applies a snapshot and resets live data', () => {
+    const run = makeRun()
+    const episode = makeEpisode()
+    const state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run,
+      episodes: [episode],
+      lastEventId: 3,
+      snapshotState: null,
+      reset: true,
+    })
+    expect(state.run?.id).toBe('r1')
+    expect(state.currentEpisode?.id).toBe('e1')
+    expect(state.lastEventId).toBe(3)
+    expect(state.progress).toEqual([{ moves: 0, length: 1 }])
+    expect(state.snapshotToken).toBe(1)
+  })
+
+  it('tracks episode, usage, logs, progress and first invalid call', () => {
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 0,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'episode.started',
+        { task_id: 'b1:t1', reference_length: 1 },
+        1,
+      ),
+    })
+    expect(state.currentEpisode?.task_key).toBe('t1')
+    expect(state.episodeToken).toBe(1)
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'model.message',
+        {
+          content: 'thinking',
+          tool_calls: 1,
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        },
+        2,
+      ),
+    })
+    expect(state.logs.at(-1)?.text).toBe('thinking')
+    expect(state.usage).toEqual({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'tool.result',
+        {
+          call_id: 'c1',
+          tool: 'turn',
+          ok: false,
+          payload: { error: 'invalid_face' },
+        },
+        3,
+      ),
+    })
+    expect(state.firstInvalidCall).toEqual({
+      tool: 'turn',
+      message: 'invalid_face',
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'move.applied',
+        {
+          moves: ["R'"],
+          state: {
+            cube: '2x2',
+            faces: {
+              U: [['white', 'white'], ['white', 'white']],
+              R: [['red', 'red'], ['red', 'red']],
+              F: [['green', 'green'], ['green', 'green']],
+              D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+              L: [['orange', 'orange'], ['orange', 'orange']],
+              B: [['blue', 'blue'], ['blue', 'blue']],
+            },
+          },
+          moves_used: 1,
+          solved: true,
+          reference_length_after: 0,
+        },
+        4,
+      ),
+    })
+    expect(state.latestBatch?.moves).toEqual(["R'"])
+    expect(state.progress.at(-1)).toEqual({ moves: 1, length: 0 })
+    expect(state.currentEpisode?.solved).toBe(true)
+    expect(state.currentEpisode?.moves_used).toBe(1)
+  })
+
+  it('deduplicates event ids and closes on run.finished', () => {
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 1,
+      snapshotState: null,
+      reset: true,
+    })
+    const duplicate = event(
+      'model.message',
+      {
+        content: 'old',
+        tool_calls: 0,
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+      },
+      1,
+    )
+    state = apply(state, { type: 'event', event: duplicate })
+    expect(state.logs).toHaveLength(0)
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'run.finished',
+        { status: 'finished', totals: null },
+        2,
+        null,
+      ),
+    })
+    expect(state.run?.status).toBe('finished')
+    expect(state.connection).toBe('closed')
+  })
+
+  it('resets per-episode data on a new episode', () => {
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [makeEpisode()],
+      lastEventId: 1,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'model.message',
+        {
+          content: 'first',
+          tool_calls: 0,
+          usage: { prompt_tokens: 2, completion_tokens: 3 },
+        },
+        2,
+      ),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'episode.started',
+        { task_id: 'b1:t2', reference_length: 2 },
+        3,
+        'e2',
+      ),
+    })
+    expect(state.currentEpisode?.id).toBe('e2')
+    expect(state.logs).toHaveLength(0)
+    expect(state.usage).toEqual({
+      prompt_tokens: 0,
+      completion_tokens: 0,
+    })
+    expect(state.progress).toEqual([{ moves: 0, length: 2 }])
+    expect(state.episodeToken).toBe(1)
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/hooks/liveReducer.test.ts`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现 reducer**
+
+新建 `frontend/src/hooks/liveReducer.ts`：
+
+```ts
+import type {
+  CubeState,
+  Episode,
+  ProgressPoint,
+  Run,
+  RunEvent,
+  Usage,
+} from '../api/types'
+
+export type ConnectionState =
+  | 'connecting'
+  | 'open'
+  | 'reconnecting'
+  | 'closed'
+
+export interface LiveLog {
+  id: number
+  kind: 'model' | 'tool'
+  text: string
+  data: unknown
+}
+
+export interface MoveBatch {
+  eventId: number
+  moves: string[]
+  state: CubeState
+}
+
+export interface LiveState {
+  run: Run | null
+  episodes: Episode[]
+  currentEpisode: Episode | null
+  logs: LiveLog[]
+  usage: Usage
+  progress: ProgressPoint[]
+  lastEventId: number
+  connection: ConnectionState
+  latestBatch: MoveBatch | null
+  firstInvalidCall: { tool: string; message: string } | null
+  error: string | null
+  snapshotState: CubeState | null
+  snapshotToken: number
+  episodeToken: number
+}
+
+export type LiveAction =
+  | {
+      type: 'snapshot'
+      run: Run
+      episodes: Episode[]
+      lastEventId: number
+      snapshotState: CubeState | null
+      reset: boolean
+    }
+  | { type: 'event'; event: RunEvent }
+  | { type: 'connection'; connection: ConnectionState }
+
+export function initialLiveState(): LiveState {
+  return {
+    run: null,
+    episodes: [],
+    currentEpisode: null,
+    logs: [],
+    usage: { prompt_tokens: 0, completion_tokens: 0 },
+    progress: [],
+    lastEventId: 0,
+    connection: 'connecting',
+    latestBatch: null,
+    firstInvalidCall: null,
+    error: null,
+    snapshotState: null,
+    snapshotToken: 0,
+    episodeToken: 0,
+  }
+}
+
+function episodeFromStarted(event: RunEvent): Episode {
+  if (event.type !== 'episode.started') {
+    throw new Error('not an episode.started event')
+  }
+  const taskId = event.data.task_id
+  return {
+    id: event.episode_id ?? `episode-${event.id}`,
+    run_id: event.run_id,
+    task_id: taskId,
+    task_key: taskId.split(':').slice(-1)[0],
+    status: 'running',
+    solved: false,
+    moves_used: 0,
+    reference_length: event.data.reference_length,
+    efficiency: null,
+    progress_ratio: null,
+    protocol_errors: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    latency_ms: null,
+    failure_code: null,
+    error: null,
+    started_at: event.ts,
+    finished_at: null,
+  }
+}
+
+export function liveReducer(
+  state: LiveState,
+  action: LiveAction,
+): LiveState {
+  if (action.type === 'connection') {
+    return { ...state, connection: action.connection }
+  }
+  if (action.type === 'snapshot') {
+    const current = action.episodes.at(-1) ?? null
+    return {
+      ...state,
+      run: action.run,
+      episodes: action.episodes,
+      currentEpisode: current,
+      lastEventId: action.lastEventId,
+      snapshotState: action.snapshotState,
+      snapshotToken: state.snapshotToken + 1,
+      error: action.run.error,
+      connection:
+        action.run.status === 'queued' || action.run.status === 'running'
+          ? state.connection
+          : 'closed',
+      ...(action.reset
+        ? {
+            logs: [],
+            usage: { prompt_tokens: 0, completion_tokens: 0 },
+            progress: current
+              ? [{ moves: current.moves_used, length: current.reference_length }]
+              : [],
+            latestBatch: null,
+            firstInvalidCall: null,
+          }
+        : {}),
+    }
+  }
+
+  const event = action.event
+  if (event.id <= state.lastEventId) return state
+  const next = { ...state, lastEventId: event.id }
+
+  switch (event.type) {
+    case 'episode.started': {
+      const episode = episodeFromStarted(event)
+      const episodes = [
+        ...state.episodes.filter((item) => item.id !== episode.id),
+        episode,
+      ]
+      return {
+        ...next,
+        episodes,
+        currentEpisode: episode,
+        logs: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+        progress: [{ moves: 0, length: episode.reference_length }],
+        latestBatch: null,
+        firstInvalidCall: null,
+        episodeToken: state.episodeToken + 1,
+      }
+    }
+    case 'model.message': {
+      const logs = event.data.content
+        ? [
+            ...state.logs,
+            {
+              id: event.id,
+              kind: 'model' as const,
+              text: event.data.content,
+              data: event.data,
+            },
+          ]
+        : state.logs
+      return { ...next, logs, usage: event.data.usage }
+    }
+    case 'tool.call': {
+      return {
+        ...next,
+        logs: [
+          ...state.logs,
+          {
+            id: event.id,
+            kind: 'tool',
+            text: `${event.data.tool} ${JSON.stringify(
+              event.data.arguments ?? {},
+            )}`,
+            data: event.data,
+          },
+        ],
+      }
+    }
+    case 'tool.result': {
+      const ok = event.data.ok
+      const message = String(event.data.payload.error ?? 'failed')
+      return {
+        ...next,
+        logs: [
+          ...state.logs,
+          {
+            id: event.id,
+            kind: 'tool',
+            text: `${event.data.tool} → ${ok ? 'ok' : message}`,
+            data: event.data,
+          },
+        ],
+        firstInvalidCall:
+          !ok && !state.firstInvalidCall
+            ? { tool: event.data.tool, message }
+            : state.firstInvalidCall,
+      }
+    }
+    case 'move.applied': {
+      const current = state.currentEpisode
+        ? {
+            ...state.currentEpisode,
+            moves_used: event.data.moves_used,
+            solved: event.data.solved,
+          }
+        : null
+      return {
+        ...next,
+        currentEpisode: current,
+        episodes: current
+          ? state.episodes.map((item) =>
+              item.id === current.id ? current : item,
+            )
+          : state.episodes,
+        progress: [
+          ...state.progress,
+          {
+            moves: event.data.moves_used,
+            length: event.data.reference_length_after,
+          },
+        ],
+        latestBatch: {
+          eventId: event.id,
+          moves: event.data.moves,
+          state: event.data.state,
+        },
+      }
+    }
+    case 'episode.finished': {
+      const current = state.currentEpisode
+        ? {
+            ...state.currentEpisode,
+            status: event.data.status,
+            solved: event.data.solved,
+            moves_used: event.data.moves_used,
+          }
+        : null
+      return {
+        ...next,
+        currentEpisode: current,
+        episodes: current
+          ? state.episodes.map((item) =>
+              item.id === current.id ? current : item,
+            )
+          : state.episodes,
+      }
+    }
+    case 'run.finished':
+      return {
+        ...next,
+        run: state.run
+          ? { ...state.run, status: event.data.status }
+          : state.run,
+        connection: 'closed',
+      }
+    case 'run.error':
+      return {
+        ...next,
+        error: event.data.message,
+        connection: 'closed',
+      }
+    default:
+      return next
+  }
+}
+```
+
+`snapshot` 动作无论 `reset` 与否都会更新 `snapshotState` 并递增 `snapshotToken`；RunPage 用 token 变化决定是否复位。`reset: true` 额外清空 logs/usage/progress/latestBatch。
+
+- [ ] **Step 4: 运行 reducer 测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/hooks/liveReducer.test.ts
+```
+
+Expected: 4 passed。
+
+- [ ] **Step 5: 写 hook 测试**
+
+新建 `frontend/src/hooks/useRunEvents.test.tsx`：
+
+```tsx
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../api/client'
+import type { Snapshot } from '../api/types'
+import { makeRun } from '../test/fixtures'
+import { useRunEvents } from './useRunEvents'
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  listeners = new Map<string, EventListener>()
+  onopen: (() => void) | null = null
+  onerror: (() => void) | null = null
+  closed = false
+
+  constructor(public url: string) {
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    this.listeners.set(type, listener)
+  }
+
+  close() {
+    this.closed = true
+  }
+
+  emit(type: string, data: unknown) {
+    const event = {
+      data: JSON.stringify(data),
+    } as MessageEvent
+    this.listeners.get(type)?.(event as Event)
+  }
+}
+
+const snapshot: Snapshot = {
+  run: makeRun(),
+  episodes: [],
+  last_event_id: 3,
+  current_state: null,
+}
+
+beforeEach(() => {
+  FakeEventSource.instances = []
+  vi.stubGlobal('EventSource', FakeEventSource)
+  vi.spyOn(api.runs, 'snapshot').mockResolvedValue(snapshot)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+describe('useRunEvents', () => {
+  it('loads snapshot then applies SSE events', async () => {
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    expect(FakeEventSource.instances[0]?.url).toBe(
+      '/api/runs/r1/events?after=3',
+    )
+    const source = FakeEventSource.instances[0]
+    act(() => {
+      source.onopen?.()
+      source.emit('run.finished', {
+        id: 4,
+        type: 'run.finished',
+        run_id: 'r1',
+        episode_id: null,
+        ts: '2026-10-26T00:00:04+00:00',
+        data: { status: 'finished', totals: null },
+      })
+    })
+    await waitFor(() =>
+      expect(result.current.run?.status).toBe('finished'),
+    )
+    expect(result.current.connection).toBe('closed')
+  })
+
+  it('enters reconnecting on stream error', async () => {
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].onerror?.()
+    })
+    await waitFor(() =>
+      expect(result.current.connection).toBe('reconnecting'),
+    )
+  })
+})
+```
+
+`makeRun` 与 `makeEpisode` 放在 `src/test/fixtures.ts`，reducer 与 hook 测试共用。
+
+- [ ] **Step 6: 实现 hook**
+
+新建 `frontend/src/hooks/useRunEvents.ts`：
+
+```ts
+import { useEffect, useReducer, useRef } from 'react'
+import { api } from '../api/client'
+import type { RunEvent } from '../api/types'
+import {
+  initialLiveState,
+  liveReducer,
+  type LiveState,
+} from './liveReducer'
+
+const EVENT_TYPES: RunEvent['type'][] = [
+  'run.started',
+  'episode.started',
+  'model.turn.started',
+  'model.message',
+  'tool.call',
+  'tool.result',
+  'move.applied',
+  'episode.finished',
+  'run.finished',
+  'run.error',
+]
+
+export function useRunEvents(runId: string): LiveState {
+  const [state, dispatch] = useReducer(liveReducer, undefined, initialLiveState)
+  const sourceRef = useRef<EventSource | null>(null)
+  const aliveRef = useRef(true)
+  const retryRef = useRef(0)
+  const lastEventIdRef = useRef(0)
+
+  useEffect(() => {
+    lastEventIdRef.current = state.lastEventId
+  }, [state.lastEventId])
+
+  useEffect(() => {
+    aliveRef.current = true
+    let timer: number | undefined
+
+    async function connect(initial: boolean) {
+      dispatch({
+        type: 'connection',
+        connection: initial ? 'connecting' : 'reconnecting',
+      })
+      let snapshot
+      try {
+        snapshot = await api.runs.snapshot(runId)
+      } catch {
+        if (!aliveRef.current) return
+        dispatch({ type: 'connection', connection: 'reconnecting' })
+        const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
+        timer = window.setTimeout(() => void connect(false), delay)
+        return
+      }
+      if (!aliveRef.current) return
+      dispatch({
+        type: 'snapshot',
+        run: snapshot.run,
+        episodes: snapshot.episodes,
+        lastEventId: snapshot.last_event_id,
+        snapshotState: snapshot.current_state,
+        reset: initial,
+      })
+      if (
+        snapshot.run.status !== 'queued' &&
+        snapshot.run.status !== 'running'
+      ) {
+        dispatch({ type: 'connection', connection: 'closed' })
+        return
+      }
+
+      retryRef.current = 0
+      const after = initial
+        ? snapshot.last_event_id
+        : Math.max(snapshot.last_event_id, lastEventIdRef.current)
+      const source = new EventSource(api.runs.eventsUrl(runId, after))
+      sourceRef.current = source
+      source.onopen = () => {
+        retryRef.current = 0
+        dispatch({ type: 'connection', connection: 'open' })
+      }
+      const handle = (raw: Event) => {
+        const message = raw as MessageEvent
+        let event: RunEvent
+        try {
+          event = JSON.parse(message.data) as RunEvent
+        } catch {
+          return
+        }
+        dispatch({ type: 'event', event })
+        if (event.type === 'run.finished' || event.type === 'run.error') {
+          source.close()
+        }
+      }
+      for (const type of EVENT_TYPES) {
+        source.addEventListener(type, handle)
+      }
+      source.onerror = () => {
+        source.close()
+        if (!aliveRef.current) return
+        dispatch({ type: 'connection', connection: 'reconnecting' })
+        const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
+        timer = window.setTimeout(() => void connect(false), delay)
+      }
+    }
+
+    void connect(true)
+    return () => {
+      aliveRef.current = false
+      if (timer !== undefined) window.clearTimeout(timer)
+      sourceRef.current?.close()
+    }
+  }, [runId])
+
+  return state
+}
+```
+
+注意：`reset: initial` 时 reducer 会清空 live 数据；重连时 `reset: false` 保留日志与 usage，但 `snapshotState` 会更新、`snapshotToken` 递增，RunPage 会据此吸附到 snapshot 局面。
+
+- [ ] **Step 7: 运行 hook 测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/hooks
+npm run typecheck
+```
+
+Expected: reducer 4 项 + hook 2 项通过；类型检查通过。
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add frontend/src/hooks frontend/src/test/fixtures.ts
+git commit -m "feat: 实时事件 reducer 与 useRunEvents"
+```
+
+---
+
+### Task 15: Run 页（实时 + 结果 + 导出）
+
+**Files:**
+- Create: `frontend/src/components/StatusBadge.tsx`
+- Create: `frontend/src/components/ProgressChart.tsx`
+- Create: `frontend/src/components/ToolLog.tsx`
+- Create: `frontend/src/components/ResultView.tsx`
+- Create: `frontend/src/pages/RunPage.tsx`
+- Create: `frontend/src/pages/RunPage.test.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `useRun`、`useProviders`、`useBenchmark`、`useReport`、`useRunEvents`、`api.runs.cancel`、`CubeView`、`LiveState`
+- Produces:
+  - `RunLivePanel`、`ResultView`
+  - `RunPage`（默认导出）
+  - `data-testid`：`run-status`、`run-result`、`progress-path`、`tool-log`、`export-json`、`export-csv`、`export-md`、`episode-replay-link`
+  - 速度档：0.5 / 1 / 2 / 100（instant）
+
+- [ ] **Step 1: 写组件与结果页失败测试**
+
+新建 `frontend/src/pages/RunPage.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import { describe, expect, it, vi } from 'vitest'
+import type { BenchmarkDetail, Episode, Report, Run } from '../api/types'
+import { initialLiveState, type LiveState } from '../hooks/liveReducer'
+import { RunLivePanel } from './RunPage'
+import { ResultView } from '../components/ResultView'
+
+const run: Run = {
+  id: 'run12345678',
+  provider_id: 'p1',
+  benchmark_id: 'b1',
+  tool_mode: 'both',
+  prompt_version: 'v1',
+  status: 'running',
+  totals: null,
+  error: null,
+  created_at: '2026-10-26T00:00:00+00:00',
+  started_at: new Date(Date.now() - 5000).toISOString(),
+  finished_at: null,
+  budget: {
+    max_moves: 30,
+    max_tool_calls: 50,
+    max_tokens: 300000,
+    max_seconds: 300,
+    turn_timeout: 120,
+  },
+}
+
+const episode: Episode = {
+  id: 'e1',
+  run_id: 'run12345678',
+  task_id: 'b1:t1',
+  task_key: 't1',
+  status: 'running',
+  solved: false,
+  moves_used: 2,
+  reference_length: 3,
+  efficiency: null,
+  progress_ratio: null,
+  protocol_errors: 0,
+  tokens_in: 10,
+  tokens_out: 5,
+  latency_ms: null,
+  failure_code: null,
+  error: null,
+  started_at: '2026-10-26T00:00:00+00:00',
+  finished_at: null,
+}
+
+const benchmark: BenchmarkDetail = {
+  id: 'b1',
+  name: 'demo',
+  version: 'v1',
+  kind: 'frozen',
+  cube: '2x2',
+  content_hash: 'hash',
+  frozen_at: '2026-10-26T00:00:00+00:00',
+  task_count: 1,
+  tasks: [
+    {
+      id: 't1',
+      cube: '2x2',
+      scramble: ["R'"],
+      scramble_depth: 1,
+      state: {
+        cube: '2x2',
+        faces: {
+          U: [['white', 'white'], ['white', 'white']],
+          R: [['red', 'red'], ['red', 'red']],
+          F: [['green', 'green'], ['green', 'green']],
+          D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+          L: [['orange', 'orange'], ['orange', 'orange']],
+          B: [['blue', 'blue'], ['blue', 'blue']],
+        },
+      },
+      reference_length: 1,
+      reference_kind: 'exact',
+      bin: '1',
+    },
+  ],
+}
+
+function liveState(): LiveState {
+  return {
+    ...initialLiveState(),
+    run,
+    episodes: [episode],
+    currentEpisode: episode,
+    logs: [
+      { id: 1, kind: 'model', text: 'thinking', data: {} },
+      { id: 2, kind: 'tool', text: "apply_moves {\"moves\":[\"R'\"]}", data: {} },
+    ],
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
+    progress: [
+      { moves: 0, length: 3 },
+      { moves: 2, length: 1 },
+    ],
+    lastEventId: 2,
+    connection: 'open',
+  }
+}
+
+describe('RunLivePanel', () => {
+  it('shows stats, progress and logs', () => {
+    render(
+      <RunLivePanel
+        live={liveState()}
+        run={run}
+        benchmark={benchmark}
+        provider={{
+          id: 'p1',
+          name: 'local',
+          base_url: 'http://localhost/v1',
+          model: 'm',
+          api_key_ref: 'KEY',
+          params: {},
+          key_configured: true,
+          created_at: '2026-10-26T00:00:00+00:00',
+        }}
+        onCancel={vi.fn()}
+        cancelling={false}
+      />,
+    )
+    expect(screen.getByText('local / m')).toBeInTheDocument()
+    expect(screen.getByText('2/30')).toBeInTheDocument()
+    expect(screen.getByTestId('progress-path')).toHaveAttribute(
+      'd',
+      expect.stringContaining('M'),
+    )
+    expect(screen.getByTestId('tool-log')).toHaveTextContent('thinking')
+    expect(screen.getByTestId('tool-log')).toHaveTextContent('apply_moves')
+  })
+})
+
+describe('ResultView', () => {
+  const report: Report = {
+    run_id: run.id,
+    provider_id: run.provider_id,
+    benchmark_id: run.benchmark_id,
+    status: 'finished',
+    started_at: run.started_at,
+    finished_at: '2026-10-26T00:00:10+00:00',
+    benchmark_hash: 'hash',
+    benchmark_total_tasks: 1,
+    partial: false,
+    totals: {
+      tasks: 1,
+      solved: 1,
+      solve_rate: 1,
+      ci95: [0.2, 1],
+    },
+    by_bin: {
+      '1': {
+        total: 1,
+        solved: 1,
+        solve_rate: 1,
+        ci95: [0.2, 1],
+        mean_moves: 1,
+      },
+    },
+    episodes: [
+      {
+        ...episode,
+        status: 'solved',
+        solved: true,
+        moves_used: 1,
+      },
+    ],
+  }
+
+  it('renders totals, rows and export links', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={report}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('run-result')).toHaveTextContent('1 / 1')
+    expect(screen.getByTestId('run-result')).toHaveTextContent('部分结果')
+    expect(screen.getAllByTestId('episode-replay-link')[0]).toHaveAttribute(
+      'href',
+      '/episodes/e1',
+    )
+    expect(screen.getByTestId('export-csv')).toHaveAttribute(
+      'href',
+      '/api/runs/run12345678/export?format=csv',
+    )
+    expect(screen.getByTestId('export-json')).toHaveAttribute(
+      'href',
+      '/api/runs/run12345678/report',
+    )
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/pages/RunPage.test.tsx`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现小组件**
+
+新建 `frontend/src/components/StatusBadge.tsx`：
+
+```tsx
+import { statusLabel } from '../lib/format'
+
+const COLORS: Record<string, string> = {
+  running: 'bg-sky-900/60 text-sky-300',
+  queued: 'bg-slate-800 text-slate-300',
+  solved: 'bg-emerald-900/60 text-emerald-300',
+  finished: 'bg-emerald-900/60 text-emerald-300',
+  failed: 'bg-rose-900/60 text-rose-300',
+  cancelled: 'bg-amber-900/60 text-amber-300',
+  interrupted: 'bg-amber-900/60 text-amber-300',
+  budget_exceeded: 'bg-amber-900/60 text-amber-300',
+  timeout: 'bg-amber-900/60 text-amber-300',
+  protocol_error: 'bg-rose-900/60 text-rose-300',
+  provider_error: 'bg-rose-900/60 text-rose-300',
+}
+
+export function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      data-testid="status-badge"
+      className={`rounded px-2 py-0.5 text-xs ${
+        COLORS[status] ?? 'bg-slate-800 text-slate-300'
+      }`}
+    >
+      {statusLabel(status)}
+    </span>
+  )
+}
+```
+
+新建 `frontend/src/components/ProgressChart.tsx`：
+
+```tsx
+import type { ProgressPoint } from '../api/types'
+
+export function ProgressChart({
+  points,
+  maxMoves,
+}: {
+  points: ProgressPoint[]
+  maxMoves: number
+}) {
+  if (points.length === 0) {
+    return <p className="text-xs text-slate-500">暂无进度</p>
+  }
+  const width = 320
+  const height = 120
+  const pad = 8
+  const maxLength = Math.max(
+    1,
+    ...points.map((point) => point.length ?? 0),
+  )
+  const x = (moves: number) =>
+    pad +
+    (Math.min(moves, maxMoves) / Math.max(1, maxMoves)) *
+      (width - pad * 2)
+  const y = (length: number) =>
+    height - pad - (length / maxLength) * (height - pad * 2)
+  const path = points
+    .map(
+      (point, index) =>
+        `${index === 0 ? 'M' : 'L'} ${x(point.moves).toFixed(1)} ${y(
+          point.length ?? 0,
+        ).toFixed(1)}`,
+    )
+    .join(' ')
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full"
+      role="img"
+      aria-label="进度曲线"
+    >
+      <path
+        data-testid="progress-path"
+        d={path}
+        fill="none"
+        stroke="#34d399"
+        strokeWidth="2"
+      />
+    </svg>
+  )
+}
+```
+
+新建 `frontend/src/components/ToolLog.tsx`：
+
+```tsx
+import type { LiveLog } from '../hooks/liveReducer'
+
+export function ToolLog({ logs }: { logs: LiveLog[] }) {
+  if (logs.length === 0) {
+    return <p className="text-xs text-slate-500">暂无工具日志</p>
+  }
+  return (
+    <ul data-testid="tool-log" className="max-h-64 space-y-1 overflow-auto text-xs">
+      {logs.slice(-80).map((log) => (
+        <li
+          key={log.id}
+          className={
+            log.kind === 'model' ? 'text-slate-300' : 'text-sky-300'
+          }
+        >
+          <details>
+            <summary className="cursor-pointer truncate">
+              {log.kind === 'model' ? '模型' : '工具'}：{log.text}
+            </summary>
+            <pre className="mt-1 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-400">
+              {JSON.stringify(log.data, null, 2)}
+            </pre>
+          </details>
+        </li>
+      ))}
+    </ul>
+  )
+}
+```
+
+- [ ] **Step 4: 实现 RunLivePanel 与结果页**
+
+新建 `frontend/src/components/ResultView.tsx`：
+
+```tsx
+import { Link } from 'react-router-dom'
+import { exportUrl, reportUrl } from '../api/client'
+import type {
+  BenchmarkDetail,
+  Provider,
+  Report,
+  Run,
+} from '../api/types'
+import {
+  formatPercent,
+  statusLabel,
+} from '../lib/format'
+
+function Card({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-slate-800 bg-slate-900 p-3">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-lg font-medium">{value}</div>
+    </div>
+  )
+}
+
+export function ResultView({
+  report,
+  run,
+  provider,
+  benchmark,
+}: {
+  report: Report | null
+  run: Run
+  provider: Provider | null
+  benchmark: BenchmarkDetail | null
+}) {
+  if (!report) {
+    return (
+      <section data-testid="run-result" className="text-sm text-slate-400">
+        报告加载中…
+      </section>
+    )
+  }
+  const failures = new Map<string, number>()
+  for (const episode of report.episodes) {
+    if (episode.failure_code) {
+      failures.set(
+        episode.failure_code,
+        (failures.get(episode.failure_code) ?? 0) + 1,
+      )
+    }
+  }
+  return (
+    <section data-testid="run-result" className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-xl font-semibold">运行结果</h2>
+        <span className="text-sm text-slate-400">
+          {provider ? `${provider.name} / ${provider.model}` : run.provider_id}
+          {' · '}
+          {benchmark?.name ?? run.benchmark_id}
+        </span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card
+          label="解出"
+          value={`${report.totals.solved} / ${report.totals.tasks}`}
+        />
+        <Card
+          label="解出率"
+          value={formatPercent(report.totals.solve_rate)}
+        />
+        <Card
+          label="CI95"
+          value={`${formatPercent(report.totals.ci95[0])} – ${formatPercent(
+            report.totals.ci95[1],
+          )}`}
+        />
+        <Card
+          label="部分结果"
+          value={report.partial ? '是（未跑全）' : '否'}
+        />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium text-slate-300">分箱</h3>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-800 text-left text-slate-400">
+              <th className="py-2">bin</th>
+              <th>total</th>
+              <th>solved</th>
+              <th>solve_rate</th>
+              <th>mean_moves</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(report.by_bin).map(([bin, stats]) => (
+              <tr key={bin} className="border-b border-slate-900">
+                <td className="py-2">{bin}</td>
+                <td>{stats.total}</td>
+                <td>{stats.solved}</td>
+                <td>{formatPercent(stats.solve_rate)}</td>
+                <td>{stats.mean_moves.toFixed(1)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium text-slate-300">逐题</h3>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-slate-800 text-left text-slate-400">
+              <th className="py-2">task</th>
+              <th>状态</th>
+              <th>步数</th>
+              <th>参照</th>
+              <th>效率</th>
+              <th>失败码</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {report.episodes.map((episode) => (
+              <tr
+                key={episode.id}
+                className="border-b border-slate-900"
+              >
+                <td className="py-2">{episode.task_key}</td>
+                <td>{statusLabel(episode.status)}</td>
+                <td>{episode.moves_used}</td>
+                <td>{episode.reference_length}</td>
+                <td>
+                  {episode.efficiency == null
+                    ? '—'
+                    : episode.efficiency.toFixed(2)}
+                </td>
+                <td>{episode.failure_code ?? '—'}</td>
+                <td>
+                  <Link
+                    data-testid="episode-replay-link"
+                    className="text-emerald-400"
+                    to={`/episodes/${episode.id}`}
+                  >
+                    回放
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {failures.size > 0 && (
+        <p className="text-sm text-slate-400">
+          失败分布：
+          {[...failures.entries()]
+            .map(([code, count]) => `${code} × ${count}`)
+            .join('，')}
+        </p>
+      )}
+
+      <div className="flex flex-wrap gap-3 text-sm">
+        <a
+          data-testid="export-json"
+          className="rounded border border-slate-700 px-3 py-1.5"
+          href={reportUrl(run.id)}
+          download={`run-${run.id}.json`}
+        >
+          JSON
+        </a>
+        <a
+          data-testid="export-csv"
+          className="rounded border border-slate-700 px-3 py-1.5"
+          href={exportUrl(run.id, 'csv')}
+        >
+          CSV
+        </a>
+        <a
+          data-testid="export-md"
+          className="rounded border border-slate-700 px-3 py-1.5"
+          href={exportUrl(run.id, 'md')}
+        >
+          Markdown
+        </a>
+      </div>
+    </section>
+  )
+}
+```
+
+新建 `frontend/src/pages/RunPage.tsx`：
+
+```tsx
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { api } from '../api/client'
+import {
+  qk,
+  useBenchmark,
+  useProviders,
+  useReport,
+  useRun,
+} from '../api/queries'
+import type {
+  BenchmarkDetail,
+  CubeState,
+  Provider,
+  Run,
+} from '../api/types'
+import { ProgressChart } from '../components/ProgressChart'
+import { ResultView } from '../components/ResultView'
+import { StatusBadge } from '../components/StatusBadge'
+import { ToolLog } from '../components/ToolLog'
+import { CubeView } from '../cube/CubeView'
+import { useRunEvents } from '../hooks/useRunEvents'
+import type { LiveState } from '../hooks/liveReducer'
+import {
+  formatDuration,
+  formatTokens,
+  shortId,
+} from '../lib/format'
+
+function useElapsed(startedAt: string | null): number | null {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return startedAt ? now - new Date(startedAt).getTime() : null
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="truncate text-slate-200">{value}</div>
+    </div>
+  )
+}
+
+export function RunLivePanel({
+  live,
+  run,
+  benchmark,
+  provider,
+  onCancel,
+  cancelling,
+}: {
+  live: LiveState
+  run: Run
+  benchmark: BenchmarkDetail | null
+  provider: Provider | null
+  onCancel: () => void
+  cancelling: boolean
+}) {
+  const episode = live.currentEpisode
+  const elapsed = useElapsed(run.started_at)
+  const tokens =
+    live.usage.prompt_tokens + live.usage.completion_tokens
+  const completed = live.episodes.filter(
+    (item) => item.status !== 'running',
+  ).length
+  return (
+    <aside className="space-y-4 self-start rounded border border-slate-800 bg-slate-900 p-4 text-sm">
+      <div className="grid grid-cols-2 gap-3">
+        <Stat
+          label="provider"
+          value={
+            provider
+              ? `${provider.name} / ${provider.model}`
+              : run.provider_id
+          }
+        />
+        <Stat label="题集" value={benchmark?.name ?? run.benchmark_id} />
+        <Stat
+          label="进度"
+          value={`${completed}/${benchmark?.tasks.length ?? '?'}`}
+        />
+        <Stat label="当前题" value={episode?.task_key ?? '—'} />
+        <Stat
+          label="步数"
+          value={
+            episode
+              ? `${episode.moves_used}/${run.budget.max_moves}`
+              : '—'
+          }
+        />
+        <Stat
+          label="参照长度"
+          value={String(episode?.reference_length ?? '—')}
+        />
+        <Stat label="计时" value={formatDuration(elapsed)} />
+        <Stat label="tokens" value={formatTokens(tokens)} />
+      </div>
+      <div className="flex items-center gap-2">
+        <StatusBadge status={episode?.status ?? run.status} />
+        <span className="text-xs text-slate-500">成本：未配置价格</span>
+      </div>
+      {live.firstInvalidCall && (
+        <p className="text-amber-300">
+          首次非法调用：{live.firstInvalidCall.tool} ·{' '}
+          {live.firstInvalidCall.message}
+        </p>
+      )}
+      {live.error && <p className="text-rose-300">{live.error}</p>}
+      <ProgressChart
+        points={live.progress}
+        maxMoves={run.budget.max_moves}
+      />
+      <ToolLog logs={live.logs} />
+      {(run.status === 'queued' || run.status === 'running') && (
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={cancelling}
+          className="rounded border border-rose-700 px-3 py-1.5 text-rose-300 disabled:opacity-50"
+        >
+          取消 run
+        </button>
+      )}
+    </aside>
+  )
+}
+
+export default function RunPage() {
+  const { id } = useParams()
+  const queryClient = useQueryClient()
+  const runQuery = useRun(id)
+  const providers = useProviders()
+  const live = useRunEvents(id ?? '')
+  const benchmark = useBenchmark(runQuery.data?.run.benchmark_id)
+  const run = live.run ?? runQuery.data?.run ?? null
+  const finished = run
+    ? !['queued', 'running'].includes(run.status)
+    : false
+  const report = useReport(id, finished)
+  const cancel = useMutation({
+    mutationFn: () => api.runs.cancel(id!),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.run(id!) })
+    },
+  })
+  const [speed, setSpeed] = useState(1)
+  const [paused, setPaused] = useState(false)
+  const [skipToken, setSkipToken] = useState(0)
+  const [cubeReset, setCubeReset] = useState<{
+    state: CubeState | null
+    token: number
+  }>({ state: null, token: 0 })
+
+  useEffect(() => {
+    if (live.snapshotToken === 0) return
+    setCubeReset((current) => ({
+      state: live.snapshotState,
+      token: current.token + 1,
+    }))
+  }, [live.snapshotToken, live.snapshotState])
+
+  useEffect(() => {
+    if (!benchmark.data || live.episodeToken === 0) return
+    const task = benchmark.data.tasks.find(
+      (item) => item.id === live.currentEpisode?.task_key,
+    )
+    if (task) {
+      setCubeReset((current) => ({
+        state: task.state,
+        token: current.token + 1,
+      }))
+    }
+  }, [
+    live.episodeToken,
+    live.currentEpisode?.task_key,
+    benchmark.data,
+  ])
+
+  if (!id) return null
+  if (runQuery.isPending) {
+    return <p className="text-sm text-slate-400">加载中…</p>
+  }
+  if (runQuery.error) {
+    return <p className="text-rose-300">{runQuery.error.message}</p>
+  }
+  if (!run) {
+    return <p className="text-sm text-slate-400">run 不存在。</p>
+  }
+  const provider =
+    providers.data?.find((item) => item.id === run.provider_id) ?? null
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold">
+          Run {shortId(run.id)}
+        </h1>
+        <span data-testid="run-status">
+          <StatusBadge status={run.status} />
+        </span>
+        <Link className="text-sm text-slate-400" to="/runs">
+          返回历史
+        </Link>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="space-y-3">
+          <CubeView
+            state={cubeReset.state}
+            resetToken={cubeReset.token}
+            batch={live.latestBatch}
+            speed={speed}
+            paused={paused}
+            skipToken={skipToken}
+          />
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2">
+              <span className="text-slate-400">速度</span>
+              <select
+                className="rounded bg-slate-900 px-2 py-1"
+                value={speed}
+                onChange={(event) =>
+                  setSpeed(Number(event.target.value))
+                }
+              >
+                <option value={0.5}>0.5×</option>
+                <option value={1}>1×</option>
+                <option value={2}>2×</option>
+                <option value={100}>instant</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="rounded border border-slate-700 px-3 py-1"
+              onClick={() => setPaused((current) => !current)}
+            >
+              {paused ? '继续' : '暂停'}
+            </button>
+            <button
+              type="button"
+              className="rounded border border-slate-700 px-3 py-1"
+              onClick={() => setSkipToken((current) => current + 1)}
+            >
+              跳到最新
+            </button>
+          </div>
+        </div>
+
+        {!finished && (
+          <RunLivePanel
+            live={live}
+            run={run}
+            benchmark={benchmark.data ?? null}
+            provider={provider}
+            onCancel={() => cancel.mutate()}
+            cancelling={cancel.isPending}
+          />
+        )}
+      </div>
+
+      {finished && (
+        <ResultView
+          report={report.data ?? null}
+          run={run}
+          provider={provider}
+          benchmark={benchmark.data ?? null}
+        />
+      )}
+    </div>
+  )
+}
+```
+
+把 `frontend/src/App.tsx` 中 Run 占位路由替换为：
+
+```tsx
+import RunPage from './pages/RunPage'
+...
+        <Route path="runs/:id" element={<RunPage />} />
+```
+
+- [ ] **Step 5: 运行测试与构建**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/pages/RunPage.test.tsx
+npm run typecheck
+npm run build
+```
+
+Expected: 2 passed；类型检查与构建通过。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add frontend/src/components frontend/src/pages/RunPage.tsx frontend/src/pages/RunPage.test.tsx frontend/src/App.tsx
+git commit -m "feat: Run 实时页、结果页与导出"
+```
+
+---
+
+### Task 16: Episode 单题回放
+
+**Files:**
+- Create: `frontend/src/pages/EpisodePage.tsx`
+- Create: `frontend/src/pages/EpisodePage.test.tsx`
+- Modify: `frontend/src/App.tsx`
+
+**Interfaces:**
+- Consumes: `useEpisode`、`useSteps`、`useRun`、`useBenchmark`、`CubeView`
+- Produces:
+  - `EpisodeView`
+  - `data-testid="step-row"`
+  - 点击工具步骤可把该步 applied moves 作为动画批次播放
+
+- [ ] **Step 1: 写失败测试**
+
+新建 `frontend/src/pages/EpisodePage.test.tsx`：
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import type { CubeState, Episode, Step } from '../api/types'
+import { EpisodeView } from './EpisodePage'
+
+const state: CubeState = {
+  cube: '2x2',
+  faces: {
+    U: [['white', 'white'], ['white', 'white']],
+    R: [['red', 'red'], ['red', 'red']],
+    F: [['green', 'green'], ['green', 'green']],
+    D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+    L: [['orange', 'orange'], ['orange', 'orange']],
+    B: [['blue', 'blue'], ['blue', 'blue']],
+  },
+}
+
+const episode: Episode = {
+  id: 'e1',
+  run_id: 'r1',
+  task_id: 'b1:t1',
+  task_key: 't1',
+  status: 'solved',
+  solved: true,
+  moves_used: 1,
+  reference_length: 1,
+  efficiency: 1,
+  progress_ratio: 1,
+  protocol_errors: 0,
+  tokens_in: 10,
+  tokens_out: 5,
+  latency_ms: 1000,
+  failure_code: null,
+  error: null,
+  started_at: '2026-10-26T00:00:00+00:00',
+  finished_at: '2026-10-26T00:00:01+00:00',
+}
+
+const steps: Step[] = [
+  {
+    id: 's1',
+    seq: 0,
+    kind: 'model_message',
+    tool_name: null,
+    arguments: { tool_calls: ['apply_moves'] },
+    result: { content: 'solving' },
+    state,
+    reference_length_after: 1,
+  },
+  {
+    id: 's2',
+    seq: 1,
+    kind: 'tool_result',
+    tool_name: 'apply_moves',
+    arguments: { moves: ["R'"] },
+    result: { applied: ["R'"], state },
+    state,
+    reference_length_after: 0,
+  },
+]
+
+describe('EpisodeView', () => {
+  it('lists steps, selects one and plays its moves', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    const onPlayBatch = vi.fn()
+    render(
+      <EpisodeView
+        episode={episode}
+        steps={steps}
+        selected={1}
+        onSelect={onSelect}
+        onPlayBatch={onPlayBatch}
+        cube={<div data-testid="cube-stub" />}
+      />,
+    )
+    expect(screen.getByTestId('cube-stub')).toBeInTheDocument()
+    expect(screen.getAllByTestId('step-row')).toHaveLength(2)
+    expect(screen.getByTestId('step-row')).toHaveTextContent(
+      'model_message',
+    )
+    await user.click(screen.getAllByTestId('step-row')[1])
+    expect(onSelect).toHaveBeenCalledWith(1)
+    await user.click(
+      screen.getByRole('button', { name: '播放本步' }),
+    )
+    expect(onPlayBatch).toHaveBeenCalledWith(1, ["R'"], state)
+  })
+})
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `cd frontend && npm run test:run -- src/pages/EpisodePage.test.tsx`
+
+Expected: FAIL，模块不存在。
+
+- [ ] **Step 3: 实现页面**
+
+新建 `frontend/src/pages/EpisodePage.tsx`：
+
+```tsx
+import { useState, type ReactNode } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { useBenchmark, useEpisode, useRun, useSteps } from '../api/queries'
+import type {
+  CubeState,
+  Episode,
+  Step,
+} from '../api/types'
+import { StatusBadge } from '../components/StatusBadge'
+import { CubeView } from '../cube/CubeView'
+import type { MoveBatch } from '../cube/CubeView'
+import {
+  formatDuration,
+  formatPercent,
+  formatTokens,
+} from '../lib/format'
+
+export interface EpisodeViewProps {
+  episode: Episode
+  steps: Step[]
+  selected: number
+  onSelect: (index: number) => void
+  onPlayBatch: (stepIndex: number, moves: string[], state: CubeState) => void
+  cube: ReactNode
+}
+
+export function EpisodeView({
+  episode,
+  steps,
+  selected,
+  onSelect,
+  onPlayBatch,
+  cube,
+}: EpisodeViewProps) {
+  const step = selected >= 0 ? steps[selected] : null
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold">
+          题目 {episode.task_key}
+        </h1>
+        <StatusBadge status={episode.status} />
+        <Link className="text-sm text-slate-400" to={`/runs/${episode.run_id}`}>
+          返回 run
+        </Link>
+      </div>
+      <div className="grid gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
+        <div>
+          <div className="text-xs text-slate-500">解出</div>
+          <div>{episode.solved ? '是' : '否'}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">步数 / 参照</div>
+          <div>
+            {episode.moves_used} / {episode.reference_length}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">效率</div>
+          <div>
+            {episode.efficiency == null
+              ? '—'
+              : formatPercent(episode.efficiency)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">耗时</div>
+          <div>{formatDuration(episode.latency_ms)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">tokens</div>
+          <div>
+            {formatTokens(
+              (episode.tokens_in ?? 0) + (episode.tokens_out ?? 0),
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">失败码</div>
+          <div>{episode.failure_code ?? '—'}</div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        {cube}
+        <aside className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onSelect(-1)}
+              className={`rounded px-2 py-1 text-xs ${
+                selected === -1
+                  ? 'bg-emerald-700 text-white'
+                  : 'bg-slate-800 text-slate-300'
+              }`}
+            >
+              初始局面
+            </button>
+            {steps.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                data-testid="step-row"
+                onClick={() => onSelect(index)}
+                className={`rounded px-2 py-1 text-xs ${
+                  selected === index
+                    ? 'bg-emerald-700 text-white'
+                    : 'bg-slate-800 text-slate-300'
+                }`}
+              >
+                #{item.seq} {item.kind}
+                {item.tool_name ? ` · ${item.tool_name}` : ''}
+              </button>
+            ))}
+          </div>
+
+          {step && (
+            <div className="space-y-2 border-t border-slate-800 pt-3">
+              <div className="text-slate-300">
+                kind：{step.kind}
+                {step.tool_name ? ` · ${step.tool_name}` : ''}
+              </div>
+              <div className="text-slate-400">
+                参照长度：{step.reference_length_after ?? '—'}
+              </div>
+              {Array.isArray(step.result?.applied) &&
+                step.state && (
+                  <button
+                    type="button"
+                    className="rounded border border-slate-700 px-3 py-1 text-xs"
+                    onClick={() =>
+                      onPlayBatch(
+                        selected,
+                        step.result!.applied as string[],
+                        step.state!,
+                      )
+                    }
+                  >
+                    播放本步
+                  </button>
+                )}
+              <details>
+                <summary className="cursor-pointer text-xs text-slate-500">
+                  参数
+                </summary>
+                <pre className="mt-1 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-400">
+                  {JSON.stringify(step.arguments, null, 2)}
+                </pre>
+              </details>
+              <details>
+                <summary className="cursor-pointer text-xs text-slate-500">
+                  结果
+                </summary>
+                <pre className="mt-1 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-400">
+                  {JSON.stringify(step.result, null, 2)}
+                </pre>
+              </details>
+            </div>
+          )}
+        </aside>
+      </div>
+    </div>
+  )
+}
+
+export default function EpisodePage() {
+  const { id } = useParams()
+  const episodeQuery = useEpisode(id)
+  const stepsQuery = useSteps(id)
+  const runQuery = useRun(episodeQuery.data?.run_id)
+  const benchmarkQuery = useBenchmark(runQuery.data?.run.benchmark_id)
+  const [selected, setSelected] = useState(-1)
+  const [batch, setBatch] = useState<MoveBatch | null>(null)
+
+  if (episodeQuery.isPending || stepsQuery.isPending) {
+    return <p className="text-sm text-slate-400">加载中…</p>
+  }
+  if (episodeQuery.error || stepsQuery.error) {
+    return (
+      <p className="text-rose-300">
+        {episodeQuery.error?.message ?? stepsQuery.error?.message}
+      </p>
+    )
+  }
+  const episode = episodeQuery.data
+  const steps = stepsQuery.data ?? []
+  if (!episode) return null
+  const task = benchmarkQuery.data?.tasks.find(
+    (item) => item.id === episode.task_key,
+  )
+  const state =
+    selected >= 0 ? steps[selected]?.state ?? task?.state ?? null : task?.state ?? null
+
+  function select(index: number) {
+    setSelected(index)
+    setBatch(null)
+  }
+
+  function playBatch(
+    stepIndex: number,
+    moves: string[],
+    finalState: CubeState,
+  ) {
+    setSelected(Math.max(-1, stepIndex - 1))
+    setBatch({ eventId: Date.now(), moves, state: finalState })
+  }
+
+  return (
+    <EpisodeView
+      episode={episode}
+      steps={steps}
+      selected={selected}
+      onSelect={select}
+      onPlayBatch={playBatch}
+      cube={
+        <CubeView
+          state={state}
+          resetToken={selected + 2}
+          batch={batch}
+          speed={1}
+          paused={false}
+          skipToken={0}
+        />
+      }
+    />
+  )
+}
+```
+
+把 `frontend/src/App.tsx` 中 Episode 占位路由替换为：
+
+```tsx
+import EpisodePage from './pages/EpisodePage'
+...
+        <Route path="episodes/:id" element={<EpisodePage />} />
+```
+
+- [ ] **Step 4: 运行测试与构建**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/pages/EpisodePage.test.tsx
+npm run typecheck
+npm run build
+```
+
+Expected: 1 passed；类型检查与构建通过。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add frontend/src/pages/EpisodePage.tsx frontend/src/pages/EpisodePage.test.tsx frontend/src/App.tsx
+git commit -m "feat: Episode 单题回放"
+```
+
+---
+
+### Task 17: mock OpenAI 服务与 Playwright E2E
+
+**Files:**
+- Create: `scripts/fake_openai_server.py`
+- Create: `tests/test_fake_openai_server.py`
+- Create: `frontend/playwright.config.ts`
+- Create: `frontend/e2e/workbench.spec.ts`
+
+**Interfaces:**
+- mock：`POST /v1/chat/completions`，`GET /health`
+- Playwright 三进程：mock `20129`、API `8000`、Vite `5173`
+- E2E 数据：provider `mock` + 2x2 / depth 1 / seed 3 / per_depth 1 基准集
+
+- [ ] **Step 1: 写 mock 策略失败测试**
+
+新建 `tests/test_fake_openai_server.py`：
+
+```python
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.fake_openai_server import build_completion  # noqa: E402
+
+
+def test_build_completion_returns_tool_call_then_content() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "apply_moves"},
+        }
+    ]
+    first = build_completion(
+        {"messages": [{"role": "user", "content": "go"}], "tools": tools},
+        ["R'"],
+    )
+    call = first["choices"][0]["message"]["tool_calls"][0]
+    assert call["function"]["name"] == "apply_moves"
+    assert call["function"]["arguments"] == '{"moves": ["R\'"]}'
+
+    second = build_completion(
+        {
+            "messages": [
+                {"role": "user", "content": "go"},
+                {"role": "tool", "content": "ok"},
+            ],
+            "tools": tools,
+        },
+        ["R'"],
+    )
+    assert second["choices"][0]["message"]["content"] == "solved"
+
+
+def test_build_completion_handles_probe() -> None:
+    response = build_completion(
+        {
+            "messages": [{"role": "user", "content": "Reply with ok."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {"name": "ping"},
+                }
+            ],
+        },
+        ["R'"],
+    )
+    assert response["choices"][0]["message"]["content"] == "ok"
+```
+
+- [ ] **Step 2: 运行确认失败**
+
+Run: `uv run pytest tests/test_fake_openai_server.py -q`
+
+Expected: FAIL，`ModuleNotFoundError: scripts.fake_openai_server`。
+
+- [ ] **Step 3: 实现 mock 服务**
+
+新建 `scripts/fake_openai_server.py`：
+
+```python
+from __future__ import annotations
+
+import argparse
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
+
+
+def build_completion(
+    payload: dict[str, Any], moves: list[str]
+) -> dict[str, Any]:
+    tools = payload.get("tools") or []
+    has_apply = any(
+        (tool.get("function") or {}).get("name") == "apply_moves"
+        for tool in tools
+    )
+    messages = payload.get("messages") or []
+    last = messages[-1] if messages else {}
+    if has_apply and last.get("role") != "tool":
+        message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "apply_moves",
+                        "arguments": json.dumps({"moves": moves}),
+                    },
+                }
+            ],
+        }
+        finish_reason = "tool_calls"
+    elif has_apply:
+        message = {"role": "assistant", "content": "solved"}
+        finish_reason = "stop"
+    else:
+        message = {"role": "assistant", "content": "ok"}
+        finish_reason = "stop"
+    return {
+        "id": "chatcmpl-fake",
+        "object": "chat.completion",
+        "model": payload.get("model", "fake"),
+        "choices": [
+            {
+                "index": 0,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+        },
+    }
+
+
+class Handler(BaseHTTPRequestHandler):
+    moves: list[str] = ["R'"]
+
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self._json({"ok": True})
+            return
+        self.send_error(404)
+
+    def do_POST(self) -> None:
+        if not self.path.endswith("/chat/completions"):
+            self.send_error(404)
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = json.loads(self.rfile.read(length) or b"{}")
+        self._json(build_completion(payload, self.moves))
+
+    def _json(self, body: dict[str, Any]) -> None:
+        raw = json.dumps(body).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=20129)
+    parser.add_argument("--move", action="append", dest="moves")
+    args = parser.parse_args()
+    if args.moves:
+        Handler.moves = args.moves
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    print(f"fake openai listening on {args.port}", flush=True)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+`build_completion` 的三个分支分别是：首次对话返回 `apply_moves` 工具调用；已有 tool 结果时返回 `solved` 文本；probe（无 `apply_moves` 工具）返回 `ok` 文本。
+
+- [ ] **Step 4: 运行 mock 测试**
+
+Run: `uv run pytest tests/test_fake_openai_server.py -q`
+
+Expected: 2 passed。
+
+- [ ] **Step 5: 写 Playwright 配置**
+
+新建 `frontend/playwright.config.ts`：
+
+```ts
+import { defineConfig, devices } from '@playwright/test'
+
+const dbPath = `data/e2e-${Date.now()}.db`
+
+export default defineConfig({
+  testDir: './e2e',
+  timeout: 120_000,
+  fullyParallel: false,
+  workers: 1,
+  reporter: 'list',
+  use: {
+    baseURL: 'http://127.0.0.1:5173',
+    trace: 'retain-on-failure',
+  },
+  webServer: [
+    {
+      command:
+        'uv run python scripts/fake_openai_server.py --port 20129',
+      cwd: '..',
+      url: 'http://127.0.0.1:20129/health',
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      command: `uv run mofang serve --port 8000 --db ${dbPath}`,
+      cwd: '..',
+      url: 'http://127.0.0.1:8000/api/benchmarks',
+      reuseExistingServer: false,
+      timeout: 120_000,
+      env: {
+        ...process.env,
+        OPENAI_API_KEY: 'test',
+      },
+    },
+    {
+      command: 'npm run dev -- --port 5173 --strictPort',
+      cwd: '.',
+      url: 'http://127.0.0.1:5173',
+      reuseExistingServer: false,
+      timeout: 120_000,
+    },
+  ],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+})
+```
+
+- [ ] **Step 6: 写 E2E 用例**
+
+新建 `frontend/e2e/workbench.spec.ts`：
+
+```ts
+import { expect, test } from '@playwright/test'
+
+test('provider → benchmark → live run → result → replay', async ({
+  page,
+}) => {
+  await page.goto('/providers')
+  await page.getByLabel('名称').fill('mock')
+  await page.getByLabel('模型').fill('mock-model')
+  await page
+    .getByLabel('base_url')
+    .fill('http://127.0.0.1:20129/v1')
+  await page
+    .getByLabel('API key 环境变量')
+    .fill('OPENAI_API_KEY')
+  await page.getByRole('button', { name: '保存 provider' }).click()
+  await expect(page.getByTestId('provider-card')).toContainText('mock')
+  await page.getByRole('button', { name: '探测' }).click()
+  await expect(page.getByText('支持 tool calling')).toBeVisible()
+
+  await page.goto('/benchmarks')
+  await page.getByLabel('名称').fill('e2e')
+  await page.getByLabel('深度 1').check()
+  await page.getByLabel('每档题数').fill('1')
+  await page.getByLabel('seed').fill('3')
+  await page.getByRole('button', { name: '生成基准集' }).click()
+  await expect(page).toHaveURL(/\/benchmarks\/e2e-2x2-3$/)
+  await expect(page.getByTestId('benchmark-task-row')).toHaveCount(1)
+
+  await page
+    .getByRole('link', { name: '用此题集新建 run' })
+    .click()
+  await expect(page).toHaveURL(
+    /\/runs\/new\?benchmark=e2e-2x2-3/,
+  )
+  await page.getByRole('button', { name: '启动 run' }).click()
+  await expect(page).toHaveURL(/\/runs\/[0-9a-f]+$/)
+  await expect(page.getByTestId('cube-canvas')).toBeVisible()
+  await expect(page.getByTestId('run-status')).toContainText('已完成', {
+    timeout: 30_000,
+  })
+  await expect(page.getByTestId('run-result')).toContainText('1 / 1')
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('export-csv').click(),
+  ])
+  expect(download.suggestedFilename()).toContain('.csv')
+
+  await page.getByTestId('episode-replay-link').first().click()
+  await expect(page.getByTestId('cube-canvas')).toBeVisible()
+  await expect(
+    page.getByTestId('step-row').filter({ hasText: 'apply_moves' }),
+  ).toHaveCount(1)
+})
+```
+
+- [ ] **Step 7: 安装浏览器并运行 E2E**
+
+Run:
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run e2e
+```
+
+Expected: 1 passed。若 8000/5173/20129 被占用，先停止遗留进程；不要用 `reuseExistingServer: true` 掩盖端口冲突。
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add scripts/fake_openai_server.py tests/test_fake_openai_server.py frontend/playwright.config.ts frontend/e2e/workbench.spec.ts
+git commit -m "test: mock OpenAI 服务与 M3 Playwright E2E"
+```
+
+---
+
+### Task 18: 文档、全套验证与真模型冒烟
+
+**Files:**
+- Modify: `README.md`
+- Modify: `PROJECT-PASSPORT.md`
+- Modify: `docs/superpowers/plans/2026-10-26-m3-workbench.md`（记录实测修正）
+
+**Interfaces:**
+- Produces: M3 启动/构建/E2E 文档；PASSPORT 的端口、阶段与前端依赖。
+
+- [ ] **Step 1: 更新 README**
+
+在“本地 API”之后增加：
+
+````markdown
+## 前端工作台
+
+开发期两个进程：
+
+```bash
+# 终端 1
+export OPENAI_API_KEY=...
+uv run mofang serve
+
+# 终端 2
+cd frontend
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173`。流程：Providers 新建 provider（填环境变量名）→
+Probe → Benchmarks 生成题集 → New Run → 实时 3D → 结果与导出 →
+Episode 回放。
+
+单端口演示：
+
+```bash
+cd frontend && npm run build
+cd ..
+uv run mofang serve
+```
+
+打开 `http://127.0.0.1:8000`（FastAPI 托管 `frontend/dist`）。
+
+只用 API、不托管前端时：`uv run mofang serve --web-dir ""`（或 `MOFANG_WEB_DIR=`）。
+
+无真实模型时可用 mock：
+
+```bash
+uv run python scripts/fake_openai_server.py --port 20129
+export OPENAI_API_KEY=test
+uv run mofang serve
+```
+
+Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
+（scramble 为 `R'`），mock 会返回 `R'` 并解出。
+
+前端验证：
+
+```bash
+cd frontend
+npm run typecheck
+npm run test:run
+npm run build
+npx playwright install chromium   # 首次
+npm run e2e
+```
+````
+
+- [ ] **Step 2: 更新 PROJECT-PASSPORT**
+
+- 阶段改为“Plan 1/2/3 本地完成，M4 对比页待做”。
+- 依赖增加：Node 24、npm 11、React 19、Vite、Tailwind v4、TanStack Query、three、r3f、drei、Vitest、Playwright。
+- 端口：M3 前端 `127.0.0.1:5173`；单端口演示 `8000`。
+- 数据目录：`frontend/dist` 为构建产物（gitignored）。
+- 记录 E2E 三进程与 mock 端口 `20129`。
+- 记录真实网关 UI 冒烟结果（模型可未解出，但链路、动画、报告、导出正常）。
+
+- [ ] **Step 3: 全套验证**
+
+Run:
+
+```bash
+uv run pytest -q
+cd frontend
+npm run typecheck
+npm run test:run
+npm run build
+npm run e2e
+```
+
+Expected：后端全绿；前端类型/单测/构建通过；Playwright 1 passed。
+
+- [ ] **Step 4: 真模型 UI 冒烟（手动）**
+
+```bash
+export OPENAI_API_KEY=...
+uv run mofang serve
+cd frontend && npm run dev
+```
+
+在 UI 中选择 `ollama/gpt-oss:120b`（或网关可用模型），生成 2x2 depth 1 题集，
+预算设为 6 步 / 120 秒，启动 run。确认：
+
+- 3D canvas 出现，工具日志与模型文本更新；
+- 即使模型未解出，run 正常结束，结果页显示 `budget_exceeded` 或 `stopped_unsolved`；
+- CSV/MD/JSON 导出可读；
+- Episode 回放可见步骤。
+
+该冒烟不进自动化测试；结果写入 PASSPORT。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add README.md PROJECT-PASSPORT.md docs/superpowers/plans/2026-10-26-m3-workbench.md
+git commit -m "docs: M3 工作台运行说明与验证记录"
+```
+
+---
+
+## Self-Review
+
+**Spec coverage：**
+
+- §2 使用流程：Providers（Task 9）、Benchmarks（Task 10）、New Run（Task 11）、实时/结果（Task 15）、Episode 回放（Task 16）。
+- §5 后端契约 7 项：Task 1–6。
+- §6 3D 渲染与动画：Task 12–13；纯函数黄金测试；E2E 验证 canvas。
+- §7 页面与交互：Task 9–16；Compare 明确不做。
+- §8 错误与安全：key 仅环境变量、SSE 重连、404/空状态、取消。
+- §9 测试：Vitest/RTL、后端契约、Playwright 三进程、手动真模型。
+- §10 验收：Task 17 E2E + Task 18 全套命令；静态托管 Task 6；真模型 Task 18。
+- §12 风险：facelet 黄金样例、批次末重涂、SSE `after`、snapshot 回退、E2E 串行。
+
+**Placeholder scan：** 无 TBD/TODO；每个实现步骤有代码或明确命令。
+
+**Type consistency：**
+
+- 后端事件字段 `reference_length_after`、`usage` 与前端 `RunEvent`/`LiveState` 一致。
+- `RunOut.budget` 与前端 `Run.budget` 一致。
+- `RunEvent` 的 `episode.started` 使用 `task_id`，前端构造 `task_key`。
+- `CubeView` 的 `MoveBatch` 与 `liveReducer.MoveBatch` 同名同形；`RunPage`/`EpisodePage` 直接传入。
+- `snapshot` action 的 `snapshotState` 字段在 reducer、hook、测试中一致（Task 14 代码已按此实现）。
+- `Export URLs` 与后端路由一致：`/api/runs/{id}/export?format=csv|md`、`/api/runs/{id}/report`。
+
+**已知执行注意：**
+
+- Task 14 的 `src/test/fixtures.ts` 必须创建，`makeRun`/`makeEpisode` 从 `liveReducer.test.ts` 移出，避免测试互相导入。
+- Task 17 的 mock 必须按三分支实现（apply_moves 首次、apply_moves 后 tool 结果返回 `solved`、无 apply_moves 的 probe 返回 `ok`）。
+- E2E 依赖 2x2 表；若 8000/5173/20129 被占用先停止进程。
+
+
+
+
+
+

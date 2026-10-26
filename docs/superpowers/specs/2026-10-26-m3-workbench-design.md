@@ -112,7 +112,7 @@ scripts/
 | 4 | `api/routes/runs.py` SSE | 支持 `?after=N`，与 `Last-Event-ID` 取较大值 | EventSource 不能设置请求头 |
 | 5 | `api/routes/runs.py` snapshot | 运行中的 episode 无 step 时，倒序扫描事件历史取最后一个 `move.applied` 的 `data.state` 或 `tool.result` 的 `data.payload.state`；再回退到该题 `task.state` | 当前 steps 只在 episode 结束后落库，snapshot 会返回 `{}` |
 | 6 | `api/routes/benchmarks.py` | 同 `f"{name}-{cube}-{seed}"` 已存在时返回 409 | 避免重新生成但 `save_benchmark` 静默不入库的假成功 |
-| 7 | `api/app.py` + `api/settings.py` | `web_dir`（默认 `frontend/dist`，可用 `MOFANG_WEB_DIR` 覆盖；存在才托管）；静态资源 + SPA 回退，`/api/*` 保持 JSON 404 | 单端口演示 |
+| 7 | `api/app.py` + `api/settings.py` + `cli.py` | `web_dir`（默认 `frontend/dist`，可用 `MOFANG_WEB_DIR` 或 `mofang serve --web-dir` 覆盖，空值禁用；目录存在才托管）；静态资源 + SPA 回退，`/api/*` 保持 JSON 404 | 单端口演示 |
 
 约定：
 
@@ -150,7 +150,7 @@ FACE_FRAME = {
 ### 6.2 渲染
 
 - 2x2 生成 8 个 cubie；3x3 生成 26 个（排除 `(0,0,0)` 核心）。
-- 每个 cubie 为 `RoundedBox`，略小于间距；六面材质，外露面按 facelet 上色，内侧深色。
+- 每个 cubie 用略小于间距的立方体网格与六面材质（首版 `BoxGeometry`，圆角作为视觉打磨后置）；外露面按 facelet 上色，内侧深色。
 - 颜色映射：U 白、R 红、F 绿、D 黄、L 橙、B 蓝。
 - 相机与 OrbitControls：固定初始视角可同时看到 U/F/R；禁用平移，限制极角；深色背景。
 - `CubeView` 暴露命令：`snapTo(state)`、`enqueue(moves, state)`、`setSpeed(multiplier)`、`pause()`、`resume()`、`skipToLatest()`。
