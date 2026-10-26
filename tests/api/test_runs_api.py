@@ -8,8 +8,10 @@ from mofang.cube.moves import apply_moves
 from mofang.cube.state import CubeState
 from mofang.cube.table2x2 import Table2x2Solver, build_table
 from mofang.models.provider import FakeProvider, ModelTurn, ToolCall
-from mofang.store.benchmarks import save_benchmark
+from mofang.store.benchmarks import save_benchmark, task_row_id
 from mofang.store.db import Database
+from mofang.store.providers import create_provider
+from mofang.store.runs import create_episode, create_run
 from mofang.tasks.models import Benchmark, Task
 
 
@@ -186,3 +188,92 @@ def test_cancel_and_missing(tmp_path: Path) -> None:
         assert client.get("/api/runs/nope").status_code == 404
         assert client.get("/api/runs/nope/events").status_code == 404
         assert client.post("/api/runs/nope/cancel").status_code == 404
+
+
+def test_snapshot_returns_live_state_from_events(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap.db")
+    state = apply_moves(CubeState.solved(2), ["R"])
+    benchmark = Benchmark(
+        id="snap-bench",
+        name="snap",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        episode_id = create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        app.state.events.publish(
+            run_id,
+            "move.applied",
+            {"moves": ["R'"], "state": state.to_json(), "moves_used": 1},
+            episode_id=episode_id,
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.status_code == 200
+        assert response.json()["current_state"] == state.to_json()
+
+
+def test_snapshot_falls_back_to_task_state(tmp_path: Path) -> None:
+    db = Database(tmp_path / "snap2.db")
+    state = apply_moves(CubeState.solved(2), ["R"])
+    benchmark = Benchmark(
+        id="snap-bench-2",
+        name="snap2",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1", cube="2x2", scramble=["R"], scramble_depth=1,
+                state=state.to_json(), reference_length=1,
+                reference_kind="exact", bin="1",
+            )
+        ],
+    )
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    with TestClient(app) as client:
+        save_benchmark(db, benchmark, {})
+        provider = create_provider(
+            db, name="p", base_url="http://localhost:1/v1",
+            model="m", api_key_ref="KEY",
+        )
+        run_id = create_run(
+            db, provider_id=provider.id, benchmark_id=benchmark.id,
+            tool_mode="both", prompt_version="v1", params={}, budget={},
+        )
+        create_episode(
+            db, run_id=run_id,
+            task_row_id=task_row_id(benchmark.id, "t1"),
+            reference_length=1,
+            started_at="2026-10-26T00:00:00+00:00",
+        )
+        response = client.get(f"/api/runs/{run_id}/snapshot")
+        assert response.json()["current_state"] == state.to_json()

@@ -78,6 +78,42 @@ def detail(run_id: str, request: Request) -> dict:
     }
 
 
+def _event_state(event) -> dict | None:
+    if event.type == "move.applied":
+        state = event.data.get("state")
+        if isinstance(state, dict) and state:
+            return state
+    if event.type == "tool.result":
+        payload = event.data.get("payload")
+        if isinstance(payload, dict):
+            state = payload.get("state")
+            if isinstance(state, dict) and state:
+                return state
+    return None
+
+
+def _live_state(db, events, run: dict, episodes: list[dict]) -> dict | None:
+    if not episodes:
+        return None
+    last = episodes[-1]
+    if last["status"] != "running":
+        return last["final_state"] or None
+    steps = get_steps(db, last["id"])
+    if steps and steps[-1]["state"]:
+        return steps[-1]["state"]
+    for event in reversed(events.history(run["id"])):
+        state = _event_state(event)
+        if state is not None:
+            return state
+    benchmark = get_benchmark(db, run["benchmark_id"])
+    if benchmark is not None:
+        task_key = last["task_id"].split(":", 1)[-1]
+        for task in benchmark.tasks:
+            if task.id == task_key:
+                return task.state
+    return None
+
+
 @router.get("/{run_id}/snapshot")
 def snapshot(run_id: str, request: Request) -> dict:
     db = request.app.state.db
@@ -85,14 +121,9 @@ def snapshot(run_id: str, request: Request) -> dict:
     if run is None:
         raise HTTPException(404, "run not found")
     episodes = get_run_episodes(db, run_id)
-    current_state = None
-    if episodes:
-        last = episodes[-1]
-        current_state = last["final_state"]
-        if last["status"] == "running":
-            steps = get_steps(db, last["id"])
-            if steps:
-                current_state = steps[-1]["state"]
+    current_state = _live_state(
+        db, request.app.state.events, run, episodes
+    )
     return {
         "run": _run_out(run),
         "episodes": [_episode_out(item) for item in episodes],
