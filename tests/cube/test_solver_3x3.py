@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from mofang.cube.moves import apply_moves
 from mofang.cube.solver import RubikTwoPhaseClient, facelets_3x3
+from mofang.cube.solver_worker import missing_tables
 from mofang.cube.state import CubeState
 
 
@@ -22,6 +25,9 @@ def test_facelets_after_one_move() -> None:
 
 @pytest.mark.slow
 def test_rubik_two_phase_solves() -> None:
+    missing = missing_tables(Path.cwd())
+    if missing:
+        pytest.skip("3x3 tables missing: " + ", ".join(missing))
     client = RubikTwoPhaseClient()
     try:
         state = apply_moves(CubeState.solved(3), ["R", "U", "F'"])
