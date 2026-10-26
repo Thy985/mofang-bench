@@ -138,6 +138,47 @@ def test_sse_replays_and_finishes(tmp_path: Path) -> None:
         assert seen[-1] == "run.finished"
 
 
+def test_sse_after_query_and_header_take_max(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            )
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        run_id = client.post(
+            "/api/runs",
+            json={"provider_id": provider_id, "benchmark_id": benchmark_id},
+        ).json()["id"]
+        wait_finished(client, run_id)
+        total = client.get(f"/api/runs/{run_id}/snapshot").json()["last_event_id"]
+        assert total >= 4
+
+        def replayed_ids(headers: dict[str, str], after: int) -> list[int]:
+            ids: list[int] = []
+            with client.stream(
+                "GET",
+                f"/api/runs/{run_id}/events?after={after}",
+                headers=headers,
+            ) as response:
+                assert response.status_code == 200
+                for line in response.iter_lines():
+                    if line.startswith("id: "):
+                        ids.append(int(line.split(": ", 1)[1]))
+                    if line.startswith("event: run.finished"):
+                        break
+            return ids
+
+        assert replayed_ids({}, total - 2) == [total - 1, total]
+        assert replayed_ids({"Last-Event-ID": str(total - 1)}, total - 2) == [total]
+        assert replayed_ids({"Last-Event-ID": str(total - 2)}, total - 1) == [total]
+
+
 def test_cancel_and_missing(tmp_path: Path) -> None:
     client, _ = make_app(tmp_path, [])
     with client:
