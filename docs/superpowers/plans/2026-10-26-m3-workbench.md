@@ -771,7 +771,7 @@ git commit -m "fix: 重复基准集返回 409"
 - Produces:
   - `Settings.web_dir: Path | None`，默认 `Path("frontend/dist")`
   - `Settings.from_env()` 读取 `MOFANG_WEB_DIR`；空字符串表示禁用
-  - `create_app()` 在 `web_dir/index.html` 存在时挂载 `/assets` 并提供 SPA 回退；`/api/*` 仍返回 JSON 404
+  - `create_app()` 在 `web_dir/index.html` 存在时挂载 `/assets` 并提供 SPA 回退；`/api/*` 仍返回 JSON 404；只吐出 `web_dir` 内的文件（`%2e%2e` 之类的编码遍历不得外读，否则回退 index.html）；catch-all 只注册 GET，因此未知 `/api/*` 的非 GET 请求返回 JSON 405 而非 404
   - `mofang serve --web-dir`（默认 `frontend/dist`，空字符串禁用静态托管），`_serve()` 据此构造 `Settings`
 
 - [ ] **Step 1: 写失败测试**
@@ -832,6 +832,55 @@ def test_serve_parser_web_dir_override() -> None:
     assert args.web_dir == ""
 ```
 
+再追加三条（遍历防护、直接吐文件、无 index 不挂载）：
+
+```python
+def test_spa_stays_inside_web_dir(tmp_path: Path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("outside", encoding="utf-8")
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    app = create_app(
+        Settings(db_path=tmp_path / "t.db", web_dir=dist),
+        env={},
+    )
+    with TestClient(app) as client:
+        for path in (
+            "/../secret.txt",
+            "/%2e%2e/secret.txt",
+            "/..%2fsecret.txt",
+            "/%2e%2e%2f%2e%2e%2fsecret.txt",
+            "/%2fsecret.txt",
+            "/assets/%2e%2e/secret.txt",
+        ):
+            assert client.get(path).text != "outside"
+        assert client.get("/%2e%2e/secret.txt").text == "<html>app</html>"
+
+
+def test_serves_files_directly_under_web_dir(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html>app</html>", encoding="utf-8")
+    (dist / "favicon.ico").write_text("icon", encoding="utf-8")
+    app = create_app(
+        Settings(db_path=tmp_path / "t.db", web_dir=dist),
+        env={},
+    )
+    with TestClient(app) as client:
+        assert client.get("/favicon.ico").text == "icon"
+        assert client.get("/").text == "<html>app</html>"
+
+
+def test_no_mount_without_index(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(db_path=tmp_path / "t.db", web_dir=tmp_path / "missing"),
+        env={},
+    )
+    with TestClient(app) as client:
+        assert client.get("/runs/abc").status_code == 404
+```
+
 - [ ] **Step 2: 运行确认失败**
 
 Run: `uv run pytest tests/api/test_static.py tests/test_cli.py -q`
@@ -887,17 +936,22 @@ from fastapi.staticfiles import StaticFiles
         if assets.is_dir():
             app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
+        root = web_dir.resolve()
+        index = root / "index.html"
+
+        # catch-all 必须晚于 API 路由注册，否则会遮住接口路径
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa(full_path: str):
             if full_path == "api" or full_path.startswith("api/"):
                 raise HTTPException(404, "not found")
-            candidate = web_dir / full_path
-            if candidate.is_file():
+            candidate = (root / full_path).resolve()
+            # 百分号编码的 ../ 会原样到达这里，必须确认仍在 web_dir 内
+            if candidate.is_relative_to(root) and candidate.is_file():
                 return FileResponse(candidate)
-            return FileResponse(web_dir / "index.html")
+            return FileResponse(index)
 ```
 
-注意：catch-all 必须注册在 API 路由之后；`/docs`、`/openapi.json` 由 FastAPI 更早注册，仍可访问。
+注意：catch-all 必须注册在 API 路由之后；`/docs`、`/openapi.json` 由 FastAPI 更早注册，仍可访问。`web_dir` 内的文件会被直接吐出，因此 `frontend/dist` 只放构建产物；`is_relative_to(root)` 是必需的——`/%2e%2e/secret.txt`、`/..%2f..%2fsecret.txt` 这类编码遍历不会被 Starlette 归一化，缺这道检查会读到 `web_dir` 之外的文件。
 
 `src/mofang/cli.py`，`serve` 子命令新增参数并传入 `Settings`：
 
