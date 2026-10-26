@@ -30,10 +30,12 @@ def dot(a: Vec, b: Vec) -> int:
 
 def sticker_geometry(face: str, row: int, col: int, size: int) -> tuple[Vec, Vec]:
     normal, right, up = FACE_FRAME[face]
+    # row 0 是最上面一行，因此沿 up 方向取 size-1-row
+    depth = size - 1 - row
     pos = (
-        normal[0] * (size - 1) + right[0] * coord(col, size) + up[0] * coord(row, size),
-        normal[1] * (size - 1) + right[1] * coord(col, size) + up[1] * coord(row, size),
-        normal[2] * (size - 1) + right[2] * coord(col, size) + up[2] * coord(row, size),
+        normal[0] * (size - 1) + right[0] * coord(col, size) + up[0] * coord(depth, size),
+        normal[1] * (size - 1) + right[1] * coord(col, size) + up[1] * coord(depth, size),
+        normal[2] * (size - 1) + right[2] * coord(col, size) + up[2] * coord(depth, size),
     )
     return pos, normal
 
@@ -61,7 +63,7 @@ def position_to_sticker(pos: Vec, normal: Vec, size: int) -> tuple[str, int, int
     face = normal_to_face(normal)
     _, right, up = FACE_FRAME[face]
     col = coord_index(dot(pos, right), size)
-    row = coord_index(dot(pos, up), size)
+    row = size - 1 - coord_index(dot(pos, up), size)
     if not (0 <= row < size and 0 <= col < size):
         raise ValueError(f"sticker out of range: {pos} {normal}")
     return face, row, col

@@ -10,9 +10,24 @@ from mofang.cube.moves import (
     parse_move,
     turn,
 )
+from mofang.cube.solver import facelets_3x3
 from mofang.cube.state import CubeState
 
 FACES = ["U", "R", "F", "D", "L", "B"]
+
+STANDARD_AFTER_TURN = {
+    "U": "UUUUUUUUUBBBRRRRRRRRRFFFFFFDDDDDDDDDFFFLLLLLLLLLBBBBBB",
+    "R": "UUFUUFUUFRRRRRRRRRFFDFFDFFDDDBDDBDDBLLLLLLLLLUBBUBBUBB",
+    "F": "UUUUUULLLURRURRURRFFFFFFFFFRRRDDDDDDLLDLLDLLDBBBBBBBBB",
+    "D": "UUUUUUUUURRRRRRFFFFFFFFFLLLDDDDDDDDDLLLLLLBBBBBBBBBRRR",
+    "L": "BUUBUUBUURRRRRRRRRUFFUFFUFFFDDFDDFDDLLLLLLLLLBBDBBDBBD",
+    "B": "RRRUUUUUURRDRRDRRDFFFFFFFFFDDDDDDLLLULLULLULLBBBBBBBBB",
+}
+
+
+@pytest.mark.parametrize("face", FACES)
+def test_facelet_convention_matches_singmaster(face: str) -> None:
+    assert facelets_3x3(turn(CubeState.solved(3), face, 1)) == STANDARD_AFTER_TURN[face]
 
 
 @pytest.mark.parametrize("size", [2, 3])
