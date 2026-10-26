@@ -61,6 +61,7 @@ class RunOut(BaseModel):
     provider_id: str
     benchmark_id: str
     tool_mode: str
+    budget: dict[str, Any]
     prompt_version: str
     status: str
     totals: dict[str, Any] | None

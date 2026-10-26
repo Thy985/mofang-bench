@@ -81,6 +81,8 @@ def test_run_lifecycle_report_and_export(tmp_path: Path) -> None:
         assert response.status_code == 202
         run_id = response.json()["id"]
         run = wait_finished(client, run_id)
+        assert run["budget"]["max_moves"] == 30
+        assert run["budget"]["turn_timeout"] == 120.0
         assert run["status"] == "finished"
         episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
         assert episodes[0]["solved"] is True
