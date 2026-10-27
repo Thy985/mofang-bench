@@ -43,6 +43,18 @@ export function ProvidersView({
     setForm((current) => ({ ...current, [key]: value }))
   }
 
+  // type="number" 会把无法解析的输入净化成空串，而 Number('') 是 0、
+  // Number('1.5') 不是整数，都会静默写进 params（后端 params: dict[str, Any] 不拦），
+  // 所以空串、非整数、小于 1 都必须在这里拦下。
+  function readPositiveInt(value: string, label: string): number | null {
+    const parsed = Number(value)
+    if (value.trim() === '' || !Number.isInteger(parsed) || parsed < 1) {
+      setFormError(`${label} 必须是正整数`)
+      return null
+    }
+    return parsed
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setFormError(null)
@@ -53,9 +65,26 @@ export function ProvidersView({
       setFormError('base_url 必须是 http(s)')
       return
     }
+    const maxTokens = readPositiveInt(form.max_tokens, 'max_tokens')
+    if (maxTokens === null) return
+    const temperature = Number(form.temperature)
+    if (
+      form.temperature.trim() === '' ||
+      !Number.isFinite(temperature) ||
+      temperature < 0 ||
+      temperature > 2
+    ) {
+      setFormError('temperature 必须是 0 到 2 之间的数值')
+      return
+    }
     let extra: Record<string, unknown>
     try {
-      extra = JSON.parse(form.extra || '{}') as Record<string, unknown>
+      const parsed: unknown = JSON.parse(form.extra || '{}')
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setFormError('extra 必须是 JSON 对象')
+        return
+      }
+      extra = parsed as Record<string, unknown>
     } catch {
       setFormError('extra 必须是合法 JSON')
       return
@@ -68,8 +97,8 @@ export function ProvidersView({
         model: form.model,
         api_key_ref: form.api_key_ref,
         params: {
-          temperature: Number(form.temperature),
-          max_tokens: Number(form.max_tokens),
+          temperature,
+          max_tokens: maxTokens,
           extra,
         },
       })

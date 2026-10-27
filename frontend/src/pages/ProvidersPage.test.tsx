@@ -97,6 +97,52 @@ describe('ProvidersView', () => {
     expect(onCreate).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['max_tokens 清空', 'max_tokens', '', 'max_tokens 必须是正整数'],
+    ['max_tokens 归零', 'max_tokens', '0', 'max_tokens 必须是正整数'],
+    ['max_tokens 非数字', 'max_tokens', 'abc', 'max_tokens 必须是正整数'],
+    [
+      'temperature 越界',
+      'temperature',
+      '3',
+      'temperature 必须是 0 到 2 之间的数值',
+    ],
+    [
+      'temperature 非数字',
+      'temperature',
+      'abc',
+      'temperature 必须是 0 到 2 之间的数值',
+    ],
+    // '[1,2]' 要写成 '[[1,2]'：userEvent 把单个 [ 当作修饰符描述符的开头。
+    ['extra 是数组', 'extra JSON', '[[1,2]', 'extra 必须是 JSON 对象'],
+    ['extra 是 null', 'extra JSON', 'null', 'extra 必须是 JSON 对象'],
+    ['extra 是裸字符串', 'extra JSON', '"abc"', 'extra 必须是 JSON 对象'],
+    ['extra 是数字', 'extra JSON', '42', 'extra 必须是 JSON 对象'],
+  ])(
+    'rejects %s before sending anything',
+    async (_label, key, value, expected) => {
+      const user = userEvent.setup()
+      const onCreate = vi.fn().mockResolvedValue(undefined)
+      render(
+        <ProvidersView
+          providers={[]}
+          loading={false}
+          error={null}
+          onCreate={onCreate}
+          onProbe={vi.fn()}
+        />,
+      )
+      await user.type(screen.getByLabelText('名称'), 'x')
+      await user.type(screen.getByLabelText('模型'), 'm')
+      const field = screen.getByLabelText(key)
+      await user.clear(field)
+      if (value !== '') await user.type(field, value)
+      await user.click(screen.getByRole('button', { name: '保存 provider' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+      expect(onCreate).not.toHaveBeenCalled()
+    },
+  )
+
   it('maps a backend 400 on create to Chinese plus the detail', async () => {
     const user = userEvent.setup()
     const onCreate = vi
