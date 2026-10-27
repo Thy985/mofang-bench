@@ -1,5 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
+import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
+import BenchmarksPage from './pages/BenchmarksPage'
 import ProvidersPage from './pages/ProvidersPage'
 
 function Placeholder({ title }: { title: string }) {
@@ -12,10 +14,10 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/runs" replace />} />
         <Route path="providers" element={<ProvidersPage />} />
-        <Route path="benchmarks" element={<Placeholder title="Benchmarks" />} />
+        <Route path="benchmarks" element={<BenchmarksPage />} />
         <Route
           path="benchmarks/:id"
-          element={<Placeholder title="Benchmark Detail" />}
+          element={<BenchmarkDetailPage />}
         />
         <Route path="runs" element={<Placeholder title="Runs" />} />
         <Route path="runs/new" element={<Placeholder title="New Run" />} />
