@@ -2185,10 +2185,10 @@ describe('ProvidersView', () => {
     ['max_tokens 非数字', 'max_tokens', 'abc', 'max_tokens 必须是正整数'],
     ['temperature 越界', 'temperature', '3', 'temperature 必须是 0 到 2 之间的数值'],
     ['temperature 非数字', 'temperature', 'abc', 'temperature 必须是 0 到 2 之间的数值'],
-    ['extra 是数组', 'extra', '[1,2]', 'extra 必须是 JSON 对象'],
-    ['extra 是 null', 'extra', 'null', 'extra 必须是 JSON 对象'],
-    ['extra 是裸字符串', 'extra', '"abc"', 'extra 必须是 JSON 对象'],
-    ['extra 是数字', 'extra', '42', 'extra 必须是 JSON 对象'],
+    ['extra 是数组', 'extra JSON', '[[1,2]', 'extra 必须是 JSON 对象'],
+    ['extra 是 null', 'extra JSON', 'null', 'extra 必须是 JSON 对象'],
+    ['extra 是裸字符串', 'extra JSON', '"abc"', 'extra 必须是 JSON 对象'],
+    ['extra 是数字', 'extra JSON', '42', 'extra 必须是 JSON 对象'],
   ])(
     'rejects %s before sending anything',
     async (_label, key, value, expected) => {
@@ -2207,12 +2207,29 @@ describe('ProvidersView', () => {
       await user.type(screen.getByLabelText('模型'), 'm')
       const field = screen.getByLabelText(key)
       await user.clear(field)
-      await user.type(field, value)
+      if (value !== '') {
+        await user.type(field, value)
+      }
       await user.click(screen.getByRole('button', { name: '保存 provider' }))
       expect(await screen.findByRole('alert')).toHaveTextContent(expected)
       expect(onCreate).not.toHaveBeenCalled()
     },
   )
+
+  it('shows the empty-state guidance when the list loaded but is empty', async () => {
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error={null}
+        onCreate={vi.fn()}
+        onProbe={vi.fn()}
+      />,
+    )
+    expect(
+      await screen.findByText(/还没有 provider/),
+    ).toBeInTheDocument()
+  })
 
   it('maps a backend 400 on create to Chinese plus the detail', async () => {
     const user = userEvent.setup()
@@ -2277,6 +2294,8 @@ describe('ProvidersView', () => {
 ```
 
 `max_tokens` 走正整数校验、`temperature` 走 0–2 数值校验、`extra` 必须是 JSON 对象——`Number('')` 会变成 0、`JSON.parse('null')` 会得到非对象并一路写进 `params`（后端 `params: dict[str, Any]` 不拦），所以必须在前端拦下。`readPositiveInt` 只是实现内部细节，用例只断言界面上的告警文案与 `onCreate` 未被调用。
+
+两条测试实现约束（jsdom 与 userEvent 的真实行为，不是笔误）：`input[type=number]` 会把无法解析的输入净化成 `''`，所以 “非数字” 两行测到的其实是空值路径——标签保留描述，但校验里的“空值也拒绝”是它们能红的前提；`extra` 那四行用真实 `<span>` 文案 `extra JSON` 取标签，数组值写成 `'[[1,2]'`（userEvent 会把单个 `[` 当修饰键）。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -2356,7 +2375,12 @@ export function ProvidersView({
     const maxTokens = readPositiveInt(form.max_tokens, 'max_tokens')
     if (maxTokens === null) return
     const temperature = Number(form.temperature)
-    if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+    if (
+      form.temperature.trim() === '' ||
+      !Number.isFinite(temperature) ||
+      temperature < 0 ||
+      temperature > 2
+    ) {
       setFormError('temperature 必须是 0 到 2 之间的数值')
       return
     }
@@ -2602,7 +2626,7 @@ npm run test:run -- src/pages/ProvidersPage.test.tsx
 npm run typecheck
 ```
 
-Expected: 15 passed（3 条基础用例 + 9 条表单校验 `it.each` + 3 条错误映射）；类型检查通过。
+Expected: 18 passed（3 基础 + 9 表单校验 `it.each` + 3 错误映射 + 3 列表横幅与空状态）；类型检查通过。
 
 - [ ] **Step 5: 提交**
 
