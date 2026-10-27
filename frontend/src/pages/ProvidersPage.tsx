@@ -132,7 +132,10 @@ export function ProvidersView({
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Providers</h1>
       {error && (
-        <p className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300">
+        <p
+          role="alert"
+          className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300"
+        >
           {error}
         </p>
       )}
@@ -229,9 +232,12 @@ export function ProvidersView({
       {loading ? (
         <p className="text-sm text-slate-400">加载中…</p>
       ) : providers.length === 0 ? (
-        <p className="text-sm text-slate-400">
-          还没有 provider。填写上方表单，环境变量名在启动服务前 export。
-        </p>
+        // 加载失败时只留错误横幅，不再叠一句“还没有 provider”的引导文案
+        error ? null : (
+          <p className="text-sm text-slate-400">
+            还没有 provider。填写上方表单，环境变量名在启动服务前 export。
+          </p>
+        )
       ) : (
         <ul className="grid gap-3 md:grid-cols-2">
           {providers.map((provider) => (

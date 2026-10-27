@@ -204,4 +204,35 @@ describe('ProvidersView', () => {
     expect(await screen.findByText(/网络错误/)).toBeInTheDocument()
     expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
   })
+
+  it('announces a list load failure through role="alert"', async () => {
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error="网络错误：无法访问后端，请确认服务已启动"
+        onCreate={vi.fn()}
+        onProbe={vi.fn()}
+      />,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '网络错误：无法访问后端',
+    )
+  })
+
+  it('hides the empty-state copy when the list failed to load', async () => {
+    render(
+      <ProvidersView
+        providers={[]}
+        loading={false}
+        error="后端返回错误（HTTP 500）：boom"
+        onCreate={vi.fn()}
+        onProbe={vi.fn()}
+      />,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 500')
+    expect(
+      screen.queryByText(/还没有 provider/),
+    ).not.toBeInTheDocument()
+  })
 })
