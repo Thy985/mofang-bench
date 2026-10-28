@@ -171,16 +171,35 @@ describe('useRunEvents', () => {
     )
   })
 
-  it('backs off stream failures exponentially', async () => {
+  it('backs off stream failures and keeps live data on reconnect', async () => {
     const timeoutSpy = vi.spyOn(window, 'setTimeout')
     const { result } = renderHook(() => useRunEvents('r1'))
     await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].emit('model.message', {
+        id: 4,
+        type: 'model.message',
+        run_id: 'r1',
+        episode_id: 'e1',
+        ts: '2026-10-26T00:00:04+00:00',
+        data: {
+          content: 'kept',
+          tool_calls: 0,
+          usage: { prompt_tokens: 2, completion_tokens: 2 },
+        },
+      })
+    })
+    await waitFor(() => expect(result.current.logs).toHaveLength(1))
     act(() => {
       FakeEventSource.instances[0].onerror?.()
     })
     await waitFor(
       () => expect(FakeEventSource.instances).toHaveLength(2),
       { timeout: 2500 },
+    )
+    expect(result.current.logs).toHaveLength(1)
+    expect(FakeEventSource.instances[1].url).toBe(
+      '/api/runs/r1/events?after=4',
     )
     act(() => {
       FakeEventSource.instances[1].onerror?.()
