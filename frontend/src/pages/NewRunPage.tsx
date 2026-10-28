@@ -42,6 +42,9 @@ type BudgetKey =
   | 'max_seconds'
   | 'turn_timeout'
 
+// 后端 Budget 里 max_seconds / turn_timeout 是 float，spinner 要给 step="any" 才不卡小数
+const FLOAT_KEYS = new Set<BudgetKey>(['max_seconds', 'turn_timeout'])
+
 function toBudgetForm(budget: Budget): Record<BudgetKey, string> {
   return {
     max_moves: String(budget.max_moves),
@@ -177,7 +180,9 @@ export function NewRunView({
           还没有基准集，先到 <Link to="/benchmarks">Benchmarks</Link> 生成。
         </p>
       )}
+      {/* noValidate：小数秒/超时与显式 0 都交给提交时的中文校验，不要浏览器原生气泡 */}
       <form
+        noValidate
         onSubmit={handleSubmit}
         className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
       >
@@ -243,6 +248,7 @@ export function NewRunView({
                   aria-label={key}
                   type="number"
                   min={1}
+                  step={FLOAT_KEYS.has(key) ? 'any' : undefined}
                   className="rounded bg-slate-950 px-2 py-1.5"
                   value={budget[key]}
                   onChange={(event) =>

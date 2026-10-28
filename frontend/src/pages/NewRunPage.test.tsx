@@ -261,6 +261,67 @@ describe('NewRunView', () => {
     )
     expect(onCreate).not.toHaveBeenCalled()
   })
+
+  // 后端 Budget 的 max_seconds / turn_timeout 是 float，min=1 的默认 step=1
+  // 会把 120.5 判成 stepMismatch，submit 被原生校验吞掉
+  it('submits fractional max_seconds as-is', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    await user.clear(screen.getByLabelText('max_seconds'))
+    await user.type(screen.getByLabelText('max_seconds'), '120.5')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].budget.max_seconds).toBe(120.5)
+  })
+
+  // 显式 0 要落到组件的中文提示，不能被原生 rangeUnderflow 抢先弹浏览器气泡
+  it('rejects an explicit zero through the Chinese message', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    await user.clear(screen.getByLabelText('max_moves'))
+    await user.type(screen.getByLabelText('max_moves'), '0')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'max_moves 必须是正整数',
+    )
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  // 两个可选参数留空 = 沿用 provider 默认，params 必须是空对象而不是缺键或 0
+  it('sends empty params when the optional overrides stay blank', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].params).toEqual({})
+  })
 })
 
 describe('RunsView', () => {

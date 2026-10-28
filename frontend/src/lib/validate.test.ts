@@ -32,9 +32,11 @@ describe('readPositiveNumber', () => {
 
   it('rejects blanks, non-positive and non-numeric values', () => {
     expect(readPositiveNumber('')).toBeNull()
+    expect(readPositiveNumber('  ')).toBeNull()
     expect(readPositiveNumber('0')).toBeNull()
     expect(readPositiveNumber('-1')).toBeNull()
     expect(readPositiveNumber('abc')).toBeNull()
+    expect(readPositiveNumber('Infinity')).toBeNull()
   })
 })
 
