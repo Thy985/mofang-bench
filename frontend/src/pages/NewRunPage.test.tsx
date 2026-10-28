@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
@@ -201,6 +201,48 @@ describe('NewRunView', () => {
       '网络错误：无法访问后端',
     )
     expect(onCreate).toHaveBeenCalledTimes(1)
+  })
+
+  it('sends optional param overrides when provided', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    await user.type(screen.getByLabelText('params_temperature'), '0.5')
+    await user.type(screen.getByLabelText('params_max_tokens'), '2048')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].params).toEqual({
+      temperature: 0.5,
+      max_tokens: 2048,
+    })
+  })
+
+  it('rejects an out-of-range temperature', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    await user.type(screen.getByLabelText('params_temperature'), '3')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'temperature 必须是 0 到 2 之间的数值',
+    )
+    expect(onCreate).not.toHaveBeenCalled()
   })
 })
 

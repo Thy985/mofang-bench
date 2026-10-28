@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { describeError } from '../lib/errors'
+import { readNumberInRange, readPositiveInt } from '../lib/validate'
 import { useBenchmarks, useProviders, qk } from '../api/queries'
 import type {
   BenchmarkSummary,
@@ -53,6 +54,8 @@ export function NewRunView({
   const [budget, setBudget] = useState<Budget>(
     DEFAULTS[initialBenchmark?.cube ?? '2x2'],
   )
+  const [temperature, setTemperature] = useState('')
+  const [maxTokens, setMaxTokens] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const selected = benchmarks.find((item) => item.id === benchmarkId)
@@ -80,6 +83,22 @@ export function NewRunView({
     return null
   }
 
+  // 留空表示沿用 provider 的默认参数
+  function parseParams(): Record<string, number> | string {
+    const params: Record<string, number> = {}
+    if (temperature.trim() !== '') {
+      const value = readNumberInRange(temperature, 0, 2)
+      if (value === null) return 'temperature 必须是 0 到 2 之间的数值'
+      params.temperature = value
+    }
+    if (maxTokens.trim() !== '') {
+      const value = readPositiveInt(maxTokens)
+      if (value === null) return 'max_tokens 必须是正整数'
+      params.max_tokens = value
+    }
+    return params
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setFormError(null)
@@ -92,13 +111,18 @@ export function NewRunView({
       setFormError(problem)
       return
     }
+    const parsedParams = parseParams()
+    if (typeof parsedParams === 'string') {
+      setFormError(parsedParams)
+      return
+    }
     setSubmitting(true)
     try {
       await onCreate({
         provider_id: providerId,
         benchmark_id: benchmarkId,
         tool_mode: toolMode,
-        params: {},
+        params: parsedParams,
         budget,
       })
     } catch (err) {
@@ -199,6 +223,35 @@ export function NewRunView({
                 <span className="text-slate-500">{label}</span>
               </label>
             ))}
+          </div>
+        </div>
+        <div className="grid gap-2 md:col-span-2">
+          <p className="text-sm text-slate-400">
+            可选参数覆盖（留空沿用 provider 默认）
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs">
+              <span>temperature</span>
+              <input
+                aria-label="params_temperature"
+                className="rounded bg-slate-950 px-2 py-1.5"
+                value={temperature}
+                onChange={(event) => setTemperature(event.target.value)}
+              />
+              <span className="text-slate-500">0 到 2，留空不覆盖</span>
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span>max_tokens</span>
+              <input
+                aria-label="params_max_tokens"
+                type="number"
+                min={1}
+                className="rounded bg-slate-950 px-2 py-1.5"
+                value={maxTokens}
+                onChange={(event) => setMaxTokens(event.target.value)}
+              />
+              <span className="text-slate-500">留空不覆盖</span>
+            </label>
           </div>
         </div>
         <div className="flex items-center gap-3 md:col-span-2">
