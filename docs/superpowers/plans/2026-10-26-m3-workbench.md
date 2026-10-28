@@ -6898,6 +6898,7 @@ git commit -m "feat: Run 实时页、结果页与导出"
 ```tsx
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import type { CubeState, Episode, Step } from '../api/types'
 import { EpisodeView } from './EpisodePage'
@@ -6969,18 +6970,20 @@ describe('EpisodeView', () => {
     const onSelect = vi.fn()
     const onPlayBatch = vi.fn()
     render(
-      <EpisodeView
-        episode={episode}
-        steps={steps}
-        selected={1}
-        onSelect={onSelect}
-        onPlayBatch={onPlayBatch}
-        cube={<div data-testid="cube-stub" />}
-      />,
+      <MemoryRouter>
+        <EpisodeView
+          episode={episode}
+          steps={steps}
+          selected={1}
+          onSelect={onSelect}
+          onPlayBatch={onPlayBatch}
+          cube={<div data-testid="cube-stub" />}
+        />
+      </MemoryRouter>,
     )
     expect(screen.getByTestId('cube-stub')).toBeInTheDocument()
     expect(screen.getAllByTestId('step-row')).toHaveLength(2)
-    expect(screen.getByTestId('step-row')).toHaveTextContent(
+    expect(screen.getAllByTestId('step-row')[0]).toHaveTextContent(
       'model_message',
     )
     await user.click(screen.getAllByTestId('step-row')[1])
@@ -7254,6 +7257,8 @@ import EpisodePage from './pages/EpisodePage'
 ...
         <Route path="episodes/:id" element={<EpisodePage />} />
 ```
+
+此时 `Placeholder` 已无路由使用，`noUnusedLocals` 会报错；一并删除该占位组件。
 
 - [ ] **Step 4: 运行测试与构建**
 
