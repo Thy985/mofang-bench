@@ -4,6 +4,7 @@ import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
 import BenchmarksPage from './pages/BenchmarksPage'
 import NewRunPage from './pages/NewRunPage'
 import ProvidersPage from './pages/ProvidersPage'
+import RunPage from './pages/RunPage'
 import RunsPage from './pages/RunsPage'
 
 function Placeholder({ title }: { title: string }) {
@@ -23,7 +24,7 @@ export default function App() {
         />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/new" element={<NewRunPage />} />
-        <Route path="runs/:id" element={<Placeholder title="Run" />} />
+        <Route path="runs/:id" element={<RunPage />} />
         <Route path="episodes/:id" element={<Placeholder title="Episode" />} />
       </Route>
     </Routes>
