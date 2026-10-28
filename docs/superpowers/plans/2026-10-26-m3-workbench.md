@@ -6902,6 +6902,11 @@ import { describe, expect, it, vi } from 'vitest'
 import type { CubeState, Episode, Step } from '../api/types'
 import { EpisodeView } from './EpisodePage'
 
+// 页面模块静态导入 CubeView → three；用例不渲染 3D，mock 掉避免把 three 带进 jsdom。
+vi.mock('../cube/CubeView', () => ({
+  CubeView: () => <div data-testid="cube-stub" />,
+}))
+
 const state: CubeState = {
   cube: '2x2',
   faces: {
@@ -7010,6 +7015,7 @@ import type {
 import { StatusBadge } from '../components/StatusBadge'
 import { CubeView } from '../cube/CubeView'
 import type { MoveBatch } from '../cube/CubeView'
+import { describeError } from '../lib/errors'
 import {
   formatDuration,
   formatPercent,
@@ -7173,15 +7179,21 @@ export default function EpisodePage() {
   const [selected, setSelected] = useState(-1)
   const [batch, setBatch] = useState<MoveBatch | null>(null)
 
-  if (episodeQuery.isPending || stepsQuery.isPending) {
+  if (
+    episodeQuery.isPending ||
+    stepsQuery.isPending ||
+    runQuery.isPending ||
+    benchmarkQuery.isPending
+  ) {
     return <p className="text-sm text-slate-400">加载中…</p>
   }
-  if (episodeQuery.error || stepsQuery.error) {
-    return (
-      <p className="text-rose-300">
-        {episodeQuery.error?.message ?? stepsQuery.error?.message}
-      </p>
-    )
+  const error =
+    episodeQuery.error ??
+    stepsQuery.error ??
+    runQuery.error ??
+    benchmarkQuery.error
+  if (error) {
+    return <p className="text-rose-300">{describeError(error)}</p>
   }
   const episode = episodeQuery.data
   const steps = stepsQuery.data ?? []
@@ -7189,8 +7201,15 @@ export default function EpisodePage() {
   const task = benchmarkQuery.data?.tasks.find(
     (item) => item.id === episode.task_key,
   )
-  const state =
-    selected >= 0 ? steps[selected]?.state ?? task?.state ?? null : task?.state ?? null
+  // 选中步没有落库局面时，回退到它之前最近一个有局面的步骤，再回退到题初始局面。
+  function stateFor(index: number): CubeState | null {
+    for (let cursor = index; cursor >= 0; cursor -= 1) {
+      const candidate = steps[cursor]?.state
+      if (candidate) return candidate
+    }
+    return task?.state ?? null
+  }
+  const state = stateFor(selected)
 
   function select(index: number) {
     setSelected(index)
