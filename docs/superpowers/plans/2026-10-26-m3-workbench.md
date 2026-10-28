@@ -2643,14 +2643,17 @@ git commit -m "feat: Providers 页面"
 - Create: `frontend/src/pages/BenchmarksPage.tsx`
 - Create: `frontend/src/pages/BenchmarksPage.test.tsx`
 - Create: `frontend/src/pages/BenchmarkDetailPage.tsx`
-- Modify: `frontend/src/App.tsx`
+- Create: `frontend/src/lib/validate.ts`、`frontend/src/lib/validate.test.ts`
+- Modify: `frontend/src/App.tsx`、`frontend/src/pages/ProvidersPage.tsx`（改用 `lib/validate`）
 
 **Interfaces:**
 - Consumes: `useBenchmarks()`、`useBenchmark(id)`、`api.benchmarks.create`、`qk.benchmarks`
 - Produces:
   - `BenchmarksView`、`BenchmarkDetailView`
   - `data-testid="benchmark-task-row"`
-  - 409 错误在表单内显示
+  - 409 错误在表单内显示（按 `err.status === 409` 判别，`JSON.parse(err.detail)` 取回链 id；文案「已存在同 id 题集」）
+  - `readPositiveInt(value: string): number | null`、`readNumberInRange(value, min, max): number | null` —— 纯函数，不碰 React、不出文案；文案仍由页面自己出中文。Task 9 的组件内 `readPositiveInt` 迁到这里，Task 11 直接复用。
+  - 站内跳转一律用 `react-router-dom` 的 `Link`（含 409 回链），不用裸 `<a>`：`<a>` 会整页重载、清空 React Query 缓存，Task 15 的 Run 页若照抄会丢掉活的 `EventSource` 与 reducer 状态。视图用到 `Link` 时测试要 `MemoryRouter` 包裹。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -2977,12 +2980,12 @@ export function BenchmarksView({
                   {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)}
                 </div>
               </div>
-              <a
+              <Link
                 className="text-emerald-400"
-                href={`/benchmarks/${benchmark.id}`}
+                to={`/benchmarks/${encodeURIComponent(benchmark.id)}`}
               >
                 查看详情
-              </a>
+              </Link>
             </li>
           ))}
         </ul>
