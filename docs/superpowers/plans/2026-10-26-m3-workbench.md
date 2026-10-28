@@ -4297,6 +4297,13 @@ describe('rotateOffset', () => {
       })
     }
   })
+
+  it('turns=3 走短弧且落点不变', () => {
+    const spec = parseMove('R', 3)
+    expect(spec.turns).toBe(3)
+    expect(specAngle(spec)).toBeCloseTo(-Math.PI / 2, 12)
+    expect(Math.abs(specAngle(spec))).toBeLessThanOrEqual(Math.PI)
+  })
 })
 ```
 
@@ -4323,7 +4330,9 @@ export function rotateOffset(
 }
 
 export function specAngle(spec: MoveSpec): number {
-  return (spec.turns * Math.PI) / 2
+  // turns 是落地方向的整数表示：3 等价于 -1 个 90°，动画走短弧。
+  const turns = spec.turns === 3 ? -1 : spec.turns
+  return (turns * Math.PI) / 2
 }
 ```
 
@@ -4336,7 +4345,7 @@ cd frontend
 npm run test:run -- src/cube/animation.test.ts
 ```
 
-Expected: 20 passed（6 面 × 3 数量 + 刚性 + 零角）。
+Expected: 21 passed（6 面 × 3 数量 + 刚性 + 零角 + 短弧）。
 
 - [ ] **Step 4: 补 Task 12 评审携带的覆盖**
 
@@ -4569,7 +4578,6 @@ function Scene(props: CubeViewProps) {
   // state 只在 resetToken 递增时吸附；实时 state 的更新不得打断动画。
   // 事件 id 在同一 run 内单调，换 run/换题会从 1 重来，所以吸附时清掉去重标记。
   useEffect(() => {
-    if (!props.state) return
     lastBatchId.current = null
     snapTo(props.state)
   }, [props.resetToken])
@@ -4698,15 +4706,17 @@ function Scene(props: CubeViewProps) {
 
 export function CubeView(props: CubeViewProps) {
   const size = props.state ? sizeOf(props.state.cube) : 2
+  // r3f 的 camera 只在 Canvas 挂载时生效，尺寸切换必须重建 Canvas。
   return (
     <div data-testid="cube-canvas" className="h-[420px] w-full">
       <Canvas
+        key={size}
         camera={{
           position: size === 2 ? [3.2, 3.2, 4.2] : [5, 5, 6.5],
           fov: 45,
         }}
       >
-        <Scene {...props} key={size} />
+        <Scene {...props} />
       </Canvas>
     </div>
   )
