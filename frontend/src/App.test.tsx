@@ -4,6 +4,11 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
+// 路由表静态导入 RunPage → CubeView → three；jsdom 用不到 WebGL。
+vi.mock('./cube/CubeView', () => ({
+  CubeView: () => <div data-testid="cube-stub" />,
+}))
+
 beforeEach(() => {
   // Providers 页挂载即发 GET /api/providers，该 stub 就是它的空列表响应。
   vi.stubGlobal(
