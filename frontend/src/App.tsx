@@ -2,14 +2,11 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
 import BenchmarksPage from './pages/BenchmarksPage'
+import EpisodePage from './pages/EpisodePage'
 import NewRunPage from './pages/NewRunPage'
 import ProvidersPage from './pages/ProvidersPage'
 import RunPage from './pages/RunPage'
 import RunsPage from './pages/RunsPage'
-
-function Placeholder({ title }: { title: string }) {
-  return <h1 className="text-2xl font-semibold">{title}</h1>
-}
 
 export default function App() {
   return (
@@ -25,7 +22,7 @@ export default function App() {
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/new" element={<NewRunPage />} />
         <Route path="runs/:id" element={<RunPage />} />
-        <Route path="episodes/:id" element={<Placeholder title="Episode" />} />
+        <Route path="episodes/:id" element={<EpisodePage />} />
       </Route>
     </Routes>
   )
