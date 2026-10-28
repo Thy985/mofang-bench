@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { ApiError, api } from '../api/client'
 import { describeError } from '../lib/errors'
@@ -231,12 +231,12 @@ export function BenchmarksView({
             <p role="alert" className="text-sm text-rose-300">
               {formError}
               {conflictId && (
-                <a
+                <Link
                   className="ml-2 text-emerald-400 underline"
-                  href={`/benchmarks/${encodeURIComponent(conflictId)}`}
+                  to={`/benchmarks/${encodeURIComponent(conflictId)}`}
                 >
                   查看已有题集
-                </a>
+                </Link>
               )}
             </p>
           )}
@@ -262,12 +262,12 @@ export function BenchmarksView({
                   {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)}
                 </div>
               </div>
-              <a
+              <Link
                 className="text-emerald-400"
-                href={`/benchmarks/${encodeURIComponent(benchmark.id)}`}
+                to={`/benchmarks/${encodeURIComponent(benchmark.id)}`}
               >
                 查看详情
-              </a>
+              </Link>
             </li>
           ))}
         </ul>

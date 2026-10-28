@@ -1,7 +1,12 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+} from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import type {
@@ -54,18 +59,38 @@ const detail: BenchmarkDetail = {
 const conflictDetail = (id: string) =>
   JSON.stringify({ message: 'benchmark already exists', id })
 
+function PathProbe() {
+  const location = useLocation()
+  return <div data-testid="landed-at">{location.pathname}</div>
+}
+
+// 站内链接用 Link 渲染，视图必须有 Router 上下文
+function renderView({
+  benchmarks = [],
+  error = null,
+  onCreate = vi.fn(),
+}: {
+  benchmarks?: BenchmarkSummary[]
+  error?: string | null
+  onCreate?: (payload: BenchmarkCreate) => Promise<void>
+} = {}) {
+  return render(
+    <MemoryRouter initialEntries={['/benchmarks']}>
+      <BenchmarksView
+        benchmarks={benchmarks}
+        loading={false}
+        error={error}
+        onCreate={onCreate}
+      />
+    </MemoryRouter>,
+  )
+}
+
 async function submitDemoForm(
   onCreate: (payload: BenchmarkCreate) => Promise<void>,
 ) {
   const user = userEvent.setup()
-  render(
-    <BenchmarksView
-      benchmarks={[summary]}
-      loading={false}
-      error={null}
-      onCreate={onCreate}
-    />,
-  )
+  renderView({ benchmarks: [summary], onCreate })
   await user.type(screen.getByLabelText('名称'), 'demo')
   await user.click(screen.getByLabelText('深度 1'))
   await user.click(screen.getByRole('button', { name: '生成基准集' }))
@@ -80,14 +105,7 @@ describe('BenchmarksView', () => {
   it('creates a 2x2 benchmark with table solver and rejects depth 20', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error={null}
-        onCreate={onCreate}
-      />,
-    )
+    renderView({ onCreate })
     expect(screen.getByLabelText('深度 20')).toBeDisabled()
     await user.type(screen.getByLabelText('名称'), 'demo')
     await user.click(screen.getByLabelText('深度 1'))
@@ -170,14 +188,7 @@ describe('BenchmarksView', () => {
   it('switches to depth 20 and the rubik solver for 3x3', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error={null}
-        onCreate={onCreate}
-      />,
-    )
+    renderView({ onCreate })
     await user.type(screen.getByLabelText('名称'), 'big')
     await user.selectOptions(screen.getByLabelText('尺寸'), '3x3')
     expect(screen.getByText(/twophase/)).toBeInTheDocument()
@@ -197,14 +208,7 @@ describe('BenchmarksView', () => {
   it('drops depth 20 again when the size goes back to 2x2', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error={null}
-        onCreate={onCreate}
-      />,
-    )
+    renderView({ onCreate })
     await user.type(screen.getByLabelText('名称'), 'big')
     const size = screen.getByLabelText('尺寸')
     await user.selectOptions(size, '3x3')
@@ -221,14 +225,7 @@ describe('BenchmarksView', () => {
   it('refuses to generate without any depth', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn()
-    render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error={null}
-        onCreate={onCreate}
-      />,
-    )
+    renderView({ onCreate })
     await user.type(screen.getByLabelText('名称'), 'demo')
     await user.click(screen.getByRole('button', { name: '生成基准集' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -253,14 +250,7 @@ describe('BenchmarksView', () => {
     async (_label, key, value, expected) => {
       const user = userEvent.setup()
       const onCreate = vi.fn()
-      render(
-        <BenchmarksView
-          benchmarks={[]}
-          loading={false}
-          error={null}
-          onCreate={onCreate}
-        />,
-      )
+      renderView({ onCreate })
       await user.type(screen.getByLabelText('名称'), 'demo')
       await user.click(screen.getByLabelText('深度 1'))
       const field = screen.getByLabelText(key)
@@ -273,14 +263,9 @@ describe('BenchmarksView', () => {
   )
 
   it('lists each benchmark with an id-safe detail link', () => {
-    render(
-      <BenchmarksView
-        benchmarks={[summary, { ...summary, id: 'odd#2x2-7', name: 'odd' }]}
-        loading={false}
-        error={null}
-        onCreate={vi.fn()}
-      />,
-    )
+    renderView({
+      benchmarks: [summary, { ...summary, id: 'odd#2x2-7', name: 'odd' }],
+    })
     const rows = screen.getAllByRole('listitem')
     expect(rows).toHaveLength(2)
     expect(rows[0]).toHaveTextContent('demo-2x2-3')
@@ -288,34 +273,80 @@ describe('BenchmarksView', () => {
     expect(rows[0]).toHaveTextContent('abcdef12')
     expect(rows[0]).not.toHaveTextContent('abcdef123456')
     expect(
-      // 详情链接必须是真实 href：BenchmarksView 在无 Router 上下文时也要能渲染
+      // MemoryRouter 下 Link 仍渲染出真实 href，且 id 已编码
       screen.getAllByRole('link', { name: '查看详情' }).map((link) =>
         link.getAttribute('href'),
       ),
     ).toEqual(['/benchmarks/demo-2x2-3', '/benchmarks/odd%232x2-7'])
   })
 
-  it('shows the empty state when the list loaded', () => {
+  it('opens the detail page through the router instead of a full reload', async () => {
+    const user = userEvent.setup()
     render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error={null}
-        onCreate={vi.fn()}
-      />,
+      <MemoryRouter initialEntries={['/benchmarks']}>
+        <Routes>
+          <Route
+            path="/benchmarks"
+            element={
+              <BenchmarksView
+                benchmarks={[{ ...summary, id: 'odd#2x2-7' }]}
+                loading={false}
+                error={null}
+                onCreate={vi.fn()}
+              />
+            }
+          />
+          <Route path="/benchmarks/:id" element={<PathProbe />} />
+        </Routes>
+      </MemoryRouter>,
     )
+    await user.click(screen.getByRole('link', { name: '查看详情' }))
+    expect(await screen.findByTestId('landed-at')).toHaveTextContent(
+      '/benchmarks/odd%232x2-7',
+    )
+  })
+
+  it('opens the existing benchmark through the router from the 409 message', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, conflictDetail('odd#2x2-7')))
+    render(
+      <MemoryRouter initialEntries={['/benchmarks']}>
+        <Routes>
+          <Route
+            path="/benchmarks"
+            element={
+              <BenchmarksView
+                benchmarks={[]}
+                loading={false}
+                error={null}
+                onCreate={onCreate}
+              />
+            }
+          />
+          <Route path="/benchmarks/:id" element={<PathProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await user.type(screen.getByLabelText('名称'), 'odd')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    await user.click(
+      await screen.findByRole('link', { name: '查看已有题集' }),
+    )
+    expect(await screen.findByTestId('landed-at')).toHaveTextContent(
+      '/benchmarks/odd%232x2-7',
+    )
+  })
+
+  it('shows the empty state when the list loaded', () => {
+    renderView()
     expect(screen.getByText(/还没有基准集/)).toBeInTheDocument()
   })
 
   it('announces a list load failure and hides the empty state', () => {
-    render(
-      <BenchmarksView
-        benchmarks={[]}
-        loading={false}
-        error="网络错误：无法访问后端，请确认服务已启动"
-        onCreate={vi.fn()}
-      />,
-    )
+    renderView({ error: '网络错误：无法访问后端，请确认服务已启动' })
     expect(screen.getByRole('alert')).toHaveTextContent('无法访问后端')
     expect(screen.queryByText(/还没有基准集/)).not.toBeInTheDocument()
   })
@@ -325,14 +356,11 @@ describe('BenchmarksView', () => {
     const onCreate = vi
       .fn()
       .mockRejectedValueOnce(new ApiError(409, conflictDetail('demo-2x2-3')))
-    render(
-      <BenchmarksView
-        benchmarks={[summary]}
-        loading={false}
-        error="后端返回错误（HTTP 500）：boom"
-        onCreate={onCreate}
-      />,
-    )
+    renderView({
+      benchmarks: [summary],
+      error: '后端返回错误（HTTP 500）：boom',
+      onCreate,
+    })
     await user.type(screen.getByLabelText('名称'), 'demo')
     await user.click(screen.getByLabelText('深度 1'))
     await user.click(screen.getByRole('button', { name: '生成基准集' }))
