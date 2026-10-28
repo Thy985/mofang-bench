@@ -24,4 +24,11 @@ describe('facelets', () => {
     expect(cubieSlots(3)).toHaveLength(26)
     expect(cubieSlots(3)).not.toContainEqual([0, 0, 0])
   })
+
+  it('maps L stickers to backend coordinates', () => {
+    // L 的 right 是 +z、up 是 +y；镜像写反也能骗过只测 U/R/F 的用例。
+    expect(stickerPlacement('L', 0, 0, 2).position).toEqual([-1, 1, -1])
+    expect(stickerPlacement('L', 1, 1, 2).position).toEqual([-1, -1, 1])
+    expect(stickerPlacement('L', 0, 0, 3).position).toEqual([-2, 2, -2])
+  })
 })

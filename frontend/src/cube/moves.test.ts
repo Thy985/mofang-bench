@@ -38,4 +38,16 @@ describe('moves', () => {
       [1, 1, -1],
     ])
   })
+
+  it('parses negative-normal faces', () => {
+    expect(parseMove('L', 2)).toEqual({
+      face: 'L',
+      amount: 1,
+      axis: 0,
+      sign: -1,
+      layer: -1,
+      turns: 1,
+    })
+    expect(rotateSlot([-1, 1, 1], parseMove('L', 2))).toEqual([-1, -1, 1])
+  })
 })
