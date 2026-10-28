@@ -5260,7 +5260,9 @@ export function liveReducer(
       run: action.run,
       episodes: action.episodes,
       currentEpisode: current,
-      lastEventId: action.lastEventId,
+      lastEventId: action.reset
+        ? action.lastEventId
+        : Math.max(state.lastEventId, action.lastEventId),
       snapshotState: action.snapshotState,
       snapshotToken: state.snapshotToken + 1,
       error: action.run.error,
@@ -5453,7 +5455,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import type { Snapshot } from '../api/types'
-import { makeRun } from '../test/fixtures'
+import { makeEpisode, makeRun } from '../test/fixtures'
 import { useRunEvents } from './useRunEvents'
 
 class FakeEventSource {
@@ -5523,6 +5525,7 @@ describe('useRunEvents', () => {
     await waitFor(() =>
       expect(result.current.run?.status).toBe('finished'),
     )
+    expect(source.closed).toBe(true)
     expect(result.current.connection).toBe('closed')
   })
 
@@ -5562,6 +5565,80 @@ describe('useRunEvents', () => {
       await stale
     })
     expect(result.current.run?.id).toBe('r2')
+  })
+
+  it('does not open a stream for a finished run', async () => {
+    vi.spyOn(api.runs, 'snapshot').mockResolvedValue({
+      ...snapshot,
+      run: makeRun({ status: 'finished' }),
+    })
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.connection).toBe('closed'))
+    expect(FakeEventSource.instances).toHaveLength(0)
+  })
+
+  it('retries a failed first snapshot with reset and its own cursor', async () => {
+    const snapshotSpy = vi
+      .spyOn(api.runs, 'snapshot')
+      .mockResolvedValue(snapshot)
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useRunEvents(id),
+      { initialProps: { id: 'r1' } },
+    )
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].emit('model.message', {
+        id: 4,
+        type: 'model.message',
+        run_id: 'r1',
+        episode_id: 'e1',
+        ts: '2026-10-26T00:00:04+00:00',
+        data: {
+          content: 'old log',
+          tool_calls: 0,
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        },
+      })
+    })
+    await waitFor(() => expect(result.current.logs).toHaveLength(1))
+
+    const retry: Snapshot = {
+      run: makeRun({ id: 'r2' }),
+      episodes: [makeEpisode({ id: 'e2', task_key: 't2' })],
+      last_event_id: 1,
+      current_state: null,
+    }
+    snapshotSpy.mockRejectedValueOnce(new Error('offline'))
+    snapshotSpy.mockResolvedValueOnce(retry)
+    rerender({ id: 'r2' })
+    await waitFor(() => expect(result.current.run?.id).toBe('r2'), {
+      timeout: 2500,
+    })
+    expect(result.current.logs).toHaveLength(0)
+    expect(result.current.progress).toEqual([{ moves: 0, length: 1 }])
+    expect(FakeEventSource.instances.at(-1)?.url).toBe(
+      '/api/runs/r2/events?after=1',
+    )
+  })
+
+  it('backs off stream failures exponentially', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].onerror?.()
+    })
+    await waitFor(
+      () => expect(FakeEventSource.instances).toHaveLength(2),
+      { timeout: 2500 },
+    )
+    act(() => {
+      FakeEventSource.instances[1].onerror?.()
+    })
+    const delays = timeoutSpy.mock.calls
+      .map((call) => call[1])
+      .filter((delay): delay is number => typeof delay === 'number')
+    expect(delays).toContain(2000)
   })
 })
 ```
@@ -5608,7 +5685,11 @@ export function useRunEvents(runId: string): LiveState {
   useEffect(() => {
     // 每个 effect 实例独立的存活标记：runId 切换时旧 snapshot 的迟到响应必须作废。
     let alive = true
+    // reset 只取决于“本 run 是否已有一份 snapshot 落地”，与第几次连接无关。
+    let snapshotLanded = false
     let timer: number | undefined
+    lastEventIdRef.current = 0
+    retryRef.current = 0
 
     async function connect(initial: boolean) {
       dispatch({
@@ -5632,8 +5713,9 @@ export function useRunEvents(runId: string): LiveState {
         episodes: snapshot.episodes,
         lastEventId: snapshot.last_event_id,
         snapshotState: snapshot.current_state,
-        reset: initial,
+        reset: !snapshotLanded,
       })
+      snapshotLanded = true
       if (
         snapshot.run.status !== 'queued' &&
         snapshot.run.status !== 'running'
@@ -5642,10 +5724,10 @@ export function useRunEvents(runId: string): LiveState {
         return
       }
 
-      retryRef.current = 0
-      const after = initial
-        ? snapshot.last_event_id
-        : Math.max(snapshot.last_event_id, lastEventIdRef.current)
+      const after = Math.max(
+        snapshot.last_event_id,
+        lastEventIdRef.current,
+      )
       const source = new EventSource(api.runs.eventsUrl(runId, after))
       sourceRef.current?.close()
       sourceRef.current = source
@@ -5690,7 +5772,7 @@ export function useRunEvents(runId: string): LiveState {
 }
 ```
 
-注意：`reset: initial` 时 reducer 会清空 live 数据；重连时 `reset: false` 保留日志与 usage，但 `snapshotState` 会更新、`snapshotToken` 递增，RunPage 会据此吸附到 snapshot 局面。
+注意：`reset` 只在“本 run 的第一份 snapshot 落地”时为真（首次 snapshot 失败后的重试也算首次），reducer 会清空 live 数据；重连时 `reset: false` 保留日志与 usage，`lastEventId` 取 `max`，`snapshotState` 更新、`snapshotToken` 递增，RunPage 会据此吸附到 snapshot 局面。退避计数只在 `onopen` 归零，流反复失败时按 1s→2s→4s→10s 递增。
 
 - [ ] **Step 7: 运行 hook 测试**
 
@@ -5702,7 +5784,7 @@ npm run test:run -- src/hooks
 npm run typecheck
 ```
 
-Expected: reducer 6 项 + hook 3 项通过；类型检查通过。
+Expected: reducer 6 项 + hook 6 项通过；类型检查通过。
 
 - [ ] **Step 8: 提交**
 
