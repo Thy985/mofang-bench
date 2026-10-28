@@ -211,6 +211,11 @@ describe('ResultView', () => {
       'href',
       '/api/runs/run12345678/report',
     )
+    expect(screen.getByTestId('export-md')).toHaveAttribute(
+      'href',
+      '/api/runs/run12345678/export?format=md',
+    )
+    expect(screen.getByTestId('run-result')).toHaveTextContent('100.0%')
   })
 })
 
@@ -312,6 +317,9 @@ describe('RunPage', () => {
     )
     await waitFor(() =>
       expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    expect(FakeEventSource.instances[0].url).toBe(
+      '/api/runs/run12345678/events?after=3',
     )
     const cube = screen.getByTestId('cube-stub')
     const source = FakeEventSource.instances[0]

@@ -25,16 +25,24 @@ export function ResultView({
   run,
   provider,
   benchmark,
+  error = null,
 }: {
   report: Report | null
   run: Run
   provider: Provider | null
   benchmark: BenchmarkDetail | null
+  error?: string | null
 }) {
   if (!report) {
     return (
-      <section data-testid="run-result" className="text-sm text-slate-400">
-        报告加载中…
+      <section data-testid="run-result" className="text-sm">
+        {error ? (
+          <p role="alert" className="text-rose-300">
+            {error}
+          </p>
+        ) : (
+          <p className="text-slate-400">报告加载中…</p>
+        )}
       </section>
     )
   }
