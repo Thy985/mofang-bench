@@ -3248,6 +3248,30 @@ describe('NewRunView', () => {
     expect(screen.getByLabelText('max_moves')).toHaveValue(100)
     expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
   })
+
+  it.each([
+    ['max_moves 清空', 'max_moves', 'max_moves 必须是正整数'],
+    ['max_tool_calls 清空', 'max_tool_calls', 'max_tool_calls 必须是正整数'],
+    ['max_seconds 清空', 'max_seconds', 'max_seconds 必须是正数'],
+    ['turn_timeout 清空', 'turn_timeout', 'turn_timeout 必须是正数'],
+  ])(
+    'rejects %s before starting a run',
+    async (_label, key, expected) => {
+      const user = userEvent.setup()
+      const onCreate = vi.fn().mockResolvedValue(undefined)
+      render(
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          onCreate={onCreate}
+        />,
+      )
+      await user.clear(screen.getByLabelText(key))
+      await user.click(screen.getByRole('button', { name: '启动 run' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+      expect(onCreate).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('RunsView', () => {
@@ -3343,11 +3367,31 @@ export function NewRunView({
     setBudget((current) => ({ ...current, [key]: Number(value) }))
   }
 
+  // `Number('')` 是 0：清空输入必须在校验阶段拦下，否则 turn_timeout=0 会让每轮立刻超时
+  function budgetProblem(): string | null {
+    for (const key of ['max_moves', 'max_tool_calls', 'max_tokens'] as const) {
+      if (!Number.isInteger(budget[key]) || budget[key] < 1) {
+        return `${key} 必须是正整数`
+      }
+    }
+    for (const key of ['max_seconds', 'turn_timeout'] as const) {
+      if (!Number.isFinite(budget[key]) || budget[key] <= 0) {
+        return `${key} 必须是正数`
+      }
+    }
+    return null
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setFormError(null)
     if (!providerId || !benchmarkId) {
       setFormError('请选择 provider 和 benchmark')
+      return
+    }
+    const problem = budgetProblem()
+    if (problem) {
+      setFormError(problem)
       return
     }
     setSubmitting(true)
@@ -3484,7 +3528,7 @@ export default function NewRunPage() {
     mutationFn: api.runs.create,
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: qk.runs })
-      navigate(`/runs/${data.id}`)
+      navigate(`/runs/${encodeURIComponent(data.id)}`)
     },
   })
 
