@@ -6898,14 +6898,32 @@ git commit -m "feat: Run 实时页、结果页与导出"
 ```tsx
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
-import type { CubeState, Episode, Step } from '../api/types'
-import { EpisodeView } from './EpisodePage'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {
+  BenchmarkDetail,
+  CubeState,
+  Episode,
+  Run,
+  Step,
+} from '../api/types'
+import EpisodePage, { EpisodeView } from './EpisodePage'
 
 // 页面模块静态导入 CubeView → three；用例不渲染 3D，mock 掉避免把 three 带进 jsdom。
 vi.mock('../cube/CubeView', () => ({
-  CubeView: () => <div data-testid="cube-stub" />,
+  CubeView: (props: {
+    state: CubeState | null
+    resetToken: number
+    batch: { moves: string[] } | null
+  }) => (
+    <div
+      data-testid="cube-stub"
+      data-cube={props.state?.cube ?? 'none'}
+      data-token={props.resetToken}
+      data-moves={props.batch?.moves.join(',') ?? ''}
+    />
+  ),
 }))
 
 const state: CubeState = {
@@ -6964,6 +6982,78 @@ const steps: Step[] = [
   },
 ]
 
+const run: Run = {
+  id: 'r1',
+  provider_id: 'p1',
+  benchmark_id: 'b1',
+  tool_mode: 'both',
+  prompt_version: 'v1',
+  status: 'finished',
+  totals: null,
+  error: null,
+  created_at: '2026-10-26T00:00:00+00:00',
+  started_at: '2026-10-26T00:00:00+00:00',
+  finished_at: '2026-10-26T00:00:01+00:00',
+  budget: {
+    max_moves: 30,
+    max_tool_calls: 50,
+    max_tokens: 300000,
+    max_seconds: 300,
+    turn_timeout: 120,
+  },
+}
+
+const benchmark: BenchmarkDetail = {
+  id: 'b1',
+  name: 'demo',
+  version: 'v1',
+  kind: 'frozen',
+  cube: '2x2',
+  content_hash: 'hash',
+  frozen_at: '2026-10-26T00:00:00+00:00',
+  task_count: 1,
+  tasks: [
+    {
+      id: 't1',
+      cube: '2x2',
+      scramble: ["R'"],
+      scramble_depth: 1,
+      state,
+      reference_length: 1,
+      reference_kind: 'exact',
+      bin: '1',
+    },
+  ],
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status < 400,
+    status,
+    statusText: status < 400 ? 'OK' : 'Error',
+    json: async () => body,
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function renderEpisodePage(id: string) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[`/episodes/${id}`]}>
+        <Routes>
+          <Route path="/episodes/:id" element={<EpisodePage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
 describe('EpisodeView', () => {
   it('lists steps, selects one and plays its moves', async () => {
     const user = userEvent.setup()
@@ -6992,6 +7082,49 @@ describe('EpisodeView', () => {
       screen.getByRole('button', { name: '播放本步' }),
     )
     expect(onPlayBatch).toHaveBeenCalledWith(1, ["R'"], state)
+  })
+})
+
+describe('EpisodePage', () => {
+  it("plays a step's moves from its previous state", async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/episodes/e1') return jsonResponse(episode)
+        if (input === '/api/episodes/e1/steps') return jsonResponse(steps)
+        if (input === '/api/runs/r1') {
+          return jsonResponse({ run, episodes: [episode] })
+        }
+        if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
+        return jsonResponse({ detail: 'not found' }, 404)
+      }),
+    )
+    renderEpisodePage('e1')
+    const rows = await screen.findAllByTestId('step-row')
+    await user.click(rows[1])
+    const before = Number(
+      screen.getByTestId('cube-stub').getAttribute('data-token'),
+    )
+    await user.click(
+      screen.getByRole('button', { name: '播放本步' }),
+    )
+    const cube = screen.getByTestId('cube-stub')
+    expect(cube).toHaveAttribute('data-moves', "R'")
+    expect(
+      Number(cube.getAttribute('data-token')),
+    ).toBe(before + 1)
+  })
+
+  it('shows the API error instead of loading forever', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse({ detail: 'episode not found' }, 404),
+      ),
+    )
+    renderEpisodePage('missing')
+    expect(await screen.findByText(/未找到该记录/)).toBeInTheDocument()
   })
 })
 ```
@@ -7134,6 +7267,7 @@ export function EpisodeView({
                 参照长度：{step.reference_length_after ?? '—'}
               </div>
               {Array.isArray(step.result?.applied) &&
+                step.result.applied.length > 0 &&
                 step.state && (
                   <button
                     type="button"
@@ -7181,7 +7315,17 @@ export default function EpisodePage() {
   const benchmarkQuery = useBenchmark(runQuery.data?.run.benchmark_id)
   const [selected, setSelected] = useState(-1)
   const [batch, setBatch] = useState<MoveBatch | null>(null)
+  const [resetToken, setResetToken] = useState(1)
 
+  // 先看错误再看 loading：run/benchmark 依赖上游数据，上游失败时它们会一直 pending。
+  const failure =
+    episodeQuery.error ??
+    stepsQuery.error ??
+    runQuery.error ??
+    benchmarkQuery.error
+  if (failure) {
+    return <p className="text-rose-300">{describeError(failure)}</p>
+  }
   if (
     episodeQuery.isPending ||
     stepsQuery.isPending ||
@@ -7189,14 +7333,6 @@ export default function EpisodePage() {
     benchmarkQuery.isPending
   ) {
     return <p className="text-sm text-slate-400">加载中…</p>
-  }
-  const error =
-    episodeQuery.error ??
-    stepsQuery.error ??
-    runQuery.error ??
-    benchmarkQuery.error
-  if (error) {
-    return <p className="text-rose-300">{describeError(error)}</p>
   }
   const episode = episodeQuery.data
   const steps = stepsQuery.data ?? []
@@ -7217,6 +7353,7 @@ export default function EpisodePage() {
   function select(index: number) {
     setSelected(index)
     setBatch(null)
+    setResetToken((current) => current + 1)
   }
 
   function playBatch(
@@ -7225,6 +7362,7 @@ export default function EpisodePage() {
     finalState: CubeState,
   ) {
     setSelected(Math.max(-1, stepIndex - 1))
+    setResetToken((current) => current + 1)
     setBatch({ eventId: Date.now(), moves, state: finalState })
   }
 
@@ -7238,7 +7376,7 @@ export default function EpisodePage() {
       cube={
         <CubeView
           state={state}
-          resetToken={selected + 2}
+          resetToken={resetToken}
           batch={batch}
           speed={1}
           paused={false}
@@ -7271,7 +7409,7 @@ npm run typecheck
 npm run build
 ```
 
-Expected: 1 passed；类型检查与构建通过。
+Expected: 3 passed；类型检查与构建通过。
 
 - [ ] **Step 5: 提交**
 
