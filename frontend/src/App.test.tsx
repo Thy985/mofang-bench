@@ -42,4 +42,43 @@ describe('App routes', () => {
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument()
   })
+
+  it('renders the runs history route', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <App />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Runs' }),
+    ).toBeInTheDocument()
+    // 占位组件只有标题；空状态文案才能证明接的是真实页面
+    expect(
+      await screen.findByText('还没有运行记录。'),
+    ).toBeInTheDocument()
+  })
+
+  it('renders the new run route', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/new']}>
+          <App />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'New Run' }),
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: '启动 run' }),
+    ).toBeInTheDocument()
+  })
 })

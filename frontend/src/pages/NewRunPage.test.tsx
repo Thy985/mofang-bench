@@ -77,7 +77,7 @@ const totals: AggregateReport = {
   benchmark_hash: 'h2',
   benchmark_total_tasks: 2,
   partial: false,
-  totals: { tasks: 2, solved: 1, solve_rate: 0.5, ci95: [0.1, 0.9] },
+  totals: { tasks: 2, solved: 1, solve_rate: 0.25, ci95: [0.1, 0.9] },
   by_bin: {},
   episodes: [],
 }
@@ -180,8 +180,25 @@ describe('NewRunView', () => {
         />
       </MemoryRouter>,
     )
+    expect(screen.getByLabelText('Benchmark')).toHaveValue('b3')
     expect(screen.getByLabelText('max_moves')).toHaveValue(100)
     expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
+  })
+
+  it('shows a query error instead of the empty guides', () => {
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[]}
+          benchmarks={[]}
+          error="网络错误：无法访问后端，请确认服务已启动"
+          onCreate={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('网络错误')
+    expect(screen.queryByText(/还没有 provider/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/还没有基准集/)).not.toBeInTheDocument()
   })
 
   it('maps a rejected create through describeError', async () => {
@@ -270,8 +287,8 @@ describe('RunsView', () => {
             {
               ...run,
               id: 'odd#run/1',
-              provider_id: 'gone',
-              benchmark_id: 'gone2',
+              provider_id: 'p-gone',
+              benchmark_id: 'b-gone',
             },
           ]}
           providers={[provider]}
@@ -280,14 +297,39 @@ describe('RunsView', () => {
       </MemoryRouter>,
     )
     const row = screen.getByTestId('run-row')
-    expect(row).toHaveTextContent('gone')
-    expect(row).toHaveTextContent('gone2')
+    expect(row).toHaveTextContent('p-gone')
+    expect(row).toHaveTextContent('b-gone')
     expect(within(row).getByRole('link')).toHaveAttribute(
       'href',
       '/runs/odd%23run%2F1',
     )
   })
 
+  it('lists columns in spec order with scoped headers', () => {
+    render(
+      <MemoryRouter>
+        <RunsView
+          runs={[run]}
+          providers={[provider]}
+          benchmarks={benchmarks}
+        />
+      </MemoryRouter>,
+    )
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.map((header) => header.textContent)).toEqual([
+      'run',
+      'provider',
+      'benchmark',
+      '状态',
+      '创建时间',
+      '解出率',
+    ])
+    for (const header of headers) {
+      expect(header).toHaveAttribute('scope', 'col')
+    }
+  })
+
+  // solve_rate 用后端独有值（1/2 本地算会得 50%），确保前端不自行计算
   it('shows the backend solve rate only when totals exist', () => {
     render(
       <MemoryRouter>
@@ -302,7 +344,7 @@ describe('RunsView', () => {
       </MemoryRouter>,
     )
     const rows = screen.getAllByTestId('run-row')
-    expect(rows[0]).toHaveTextContent('50.0%')
+    expect(rows[0]).toHaveTextContent('25.0%')
     expect(rows[1]).toHaveTextContent('—')
   })
 })
@@ -345,10 +387,36 @@ describe('NewRunPage', () => {
       expect.objectContaining({ method: 'POST' }),
     )
   })
+
+  it('surfaces providers load failures instead of an empty guide', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/providers') {
+          return jsonResponse({ detail: 'boom' }, 500)
+        }
+        return jsonResponse([])
+      }),
+    )
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/runs/new']}>
+          <NewRunPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('后端返回错误（HTTP 500）')
+    expect(alert).toHaveTextContent('boom')
+    expect(screen.queryByText(/还没有 provider/)).not.toBeInTheDocument()
+  })
 })
 
 describe('RunsPage', () => {
-  it('maps a load failure through describeError', async () => {
+  it('keeps the title and entry when loading fails', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(jsonResponse({ detail: 'boom' }, 500)),
@@ -366,5 +434,47 @@ describe('RunsPage', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('后端返回错误（HTTP 500）')
     expect(alert).toHaveTextContent('boom')
+    expect(
+      screen.getByRole('heading', { name: 'Runs' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('link', { name: 'New Run' }),
+    ).toHaveAttribute('href', '/runs/new')
+    expect(
+      screen.getByRole('button', { name: '重试' }),
+    ).toBeInTheDocument()
+  })
+
+  it('retries a failed load', async () => {
+    const user = userEvent.setup()
+    let runsCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/runs') {
+          runsCalls += 1
+          return runsCalls === 1
+            ? jsonResponse({ detail: 'boom' }, 500)
+            : jsonResponse([])
+        }
+        return jsonResponse([])
+      }),
+    )
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RunsPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('alert')
+    await user.click(screen.getByRole('button', { name: '重试' }))
+    expect(
+      await screen.findByText('还没有运行记录。'),
+    ).toBeInTheDocument()
+    expect(runsCalls).toBe(2)
   })
 })

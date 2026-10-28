@@ -55,12 +55,14 @@ function toBudgetForm(budget: Budget): Record<BudgetKey, string> {
 export interface NewRunViewProps {
   providers: Provider[]
   benchmarks: BenchmarkSummary[]
+  error?: string | null
   onCreate: (payload: RunCreate) => Promise<void>
 }
 
 export function NewRunView({
   providers,
   benchmarks,
+  error,
   onCreate,
 }: NewRunViewProps) {
   const [searchParams] = useSearchParams()
@@ -160,12 +162,17 @@ export function NewRunView({
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">New Run</h1>
-      {providers.length === 0 && (
+      {error && (
+        <p role="alert" className="text-sm text-rose-300">
+          {error}
+        </p>
+      )}
+      {!error && providers.length === 0 && (
         <p className="text-sm text-amber-300">
           还没有 provider，先到 <Link to="/providers">Providers</Link> 配置。
         </p>
       )}
-      {benchmarks.length === 0 && (
+      {!error && benchmarks.length === 0 && (
         <p className="text-sm text-amber-300">
           还没有基准集，先到 <Link to="/benchmarks">Benchmarks</Link> 生成。
         </p>
@@ -312,10 +319,13 @@ export default function NewRunPage() {
     return <p className="text-sm text-slate-400">加载中…</p>
   }
 
+  const loadError = providers.error ?? benchmarks.error
+
   return (
     <NewRunView
       providers={providers.data ?? []}
       benchmarks={benchmarks.data ?? []}
+      error={loadError ? describeError(loadError) : null}
       onCreate={async (payload) => {
         await create.mutateAsync(payload)
       }}

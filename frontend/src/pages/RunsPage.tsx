@@ -8,6 +8,20 @@ import type {
 import { describeError } from '../lib/errors'
 import { formatPercent, shortId, statusLabel } from '../lib/format'
 
+function RunsHeader() {
+  return (
+    <div className="flex items-center justify-between">
+      <h1 className="text-2xl font-semibold">Runs</h1>
+      <Link
+        className="rounded bg-emerald-600 px-4 py-2 text-sm text-white"
+        to="/runs/new"
+      >
+        New Run
+      </Link>
+    </div>
+  )
+}
+
 export interface RunsViewProps {
   runs: Run[]
   providers: Provider[]
@@ -27,27 +41,21 @@ export function RunsView({
   )
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Runs</h1>
-        <Link
-          className="rounded bg-emerald-600 px-4 py-2 text-sm text-white"
-          to="/runs/new"
-        >
-          New Run
-        </Link>
-      </div>
+      <RunsHeader />
       {runs.length === 0 ? (
         <p className="text-sm text-slate-400">还没有运行记录。</p>
       ) : (
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th className="py-2">run</th>
-              <th>provider</th>
-              <th>benchmark</th>
-              <th>状态</th>
-              <th>解出率</th>
-              <th>创建时间</th>
+              <th scope="col" className="py-2">
+                run
+              </th>
+              <th scope="col">provider</th>
+              <th scope="col">benchmark</th>
+              <th scope="col">状态</th>
+              <th scope="col">创建时间</th>
+              <th scope="col">解出率</th>
             </tr>
           </thead>
           <tbody>
@@ -73,8 +81,8 @@ export function RunsView({
                     run.benchmark_id}
                 </td>
                 <td>{statusLabel(run.status)}</td>
-                <td>{formatPercent(run.totals?.totals.solve_rate)}</td>
                 <td>{new Date(run.created_at).toLocaleString()}</td>
+                <td>{formatPercent(run.totals?.totals.solve_rate)}</td>
               </tr>
             ))}
           </tbody>
@@ -93,9 +101,21 @@ export default function RunsPage() {
   }
   if (runs.error) {
     return (
-      <p role="alert" className="text-rose-300">
-        {describeError(runs.error)}
-      </p>
+      <div className="space-y-4">
+        <RunsHeader />
+        <div className="flex items-center gap-3">
+          <p role="alert" className="text-rose-300">
+            {describeError(runs.error)}
+          </p>
+          <button
+            type="button"
+            onClick={() => void runs.refetch()}
+            className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-200"
+          >
+            重试
+          </button>
+        </div>
+      </div>
     )
   }
   return (
