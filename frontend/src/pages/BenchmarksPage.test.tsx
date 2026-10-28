@@ -17,7 +17,7 @@ import type {
 import BenchmarkDetailPage, {
   BenchmarkDetailView,
 } from './BenchmarkDetailPage'
-import { BenchmarksView } from './BenchmarksPage'
+import BenchmarksPage, { BenchmarksView } from './BenchmarksPage'
 
 const summary: BenchmarkSummary = {
   id: 'demo-2x2-3',
@@ -373,6 +373,53 @@ describe('BenchmarksView', () => {
     expect(
       alerts.find((node) => node.textContent.includes('HTTP 500')),
     ).toBeTruthy()
+  })
+})
+
+describe('BenchmarksPage', () => {
+  // 容器是唯一走 navigate 的成功路径；id 里的 # 若漏编码会被当成 hash 截断
+  it('navigates to the encoded detail path after a create', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(
+      async (_input: string, init?: RequestInit) =>
+        init?.method === 'POST'
+          ? {
+              ok: true,
+              status: 201,
+              statusText: 'Created',
+              json: async () => ({ ...detail, id: 'odd#2x2-7' }),
+            }
+          : {
+              ok: true,
+              status: 200,
+              statusText: 'OK',
+              json: async () => [],
+            },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/benchmarks']}>
+          <Routes>
+            <Route path="/benchmarks" element={<BenchmarksPage />} />
+            <Route path="/benchmarks/:id" element={<PathProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await user.type(screen.getByLabelText('名称'), 'odd')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    expect(await screen.findByTestId('landed-at')).toHaveTextContent(
+      '/benchmarks/odd%232x2-7',
+    )
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/benchmarks',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 })
 
