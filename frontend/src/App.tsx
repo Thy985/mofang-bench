@@ -2,7 +2,9 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
 import BenchmarksPage from './pages/BenchmarksPage'
+import NewRunPage from './pages/NewRunPage'
 import ProvidersPage from './pages/ProvidersPage'
+import RunsPage from './pages/RunsPage'
 
 function Placeholder({ title }: { title: string }) {
   return <h1 className="text-2xl font-semibold">{title}</h1>
@@ -19,8 +21,8 @@ export default function App() {
           path="benchmarks/:id"
           element={<BenchmarkDetailPage />}
         />
-        <Route path="runs" element={<Placeholder title="Runs" />} />
-        <Route path="runs/new" element={<Placeholder title="New Run" />} />
+        <Route path="runs" element={<RunsPage />} />
+        <Route path="runs/new" element={<NewRunPage />} />
         <Route path="runs/:id" element={<Placeholder title="Run" />} />
         <Route path="episodes/:id" element={<Placeholder title="Episode" />} />
       </Route>
