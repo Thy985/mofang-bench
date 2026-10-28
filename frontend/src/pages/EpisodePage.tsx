@@ -125,6 +125,7 @@ export function EpisodeView({
                 参照长度：{step.reference_length_after ?? '—'}
               </div>
               {Array.isArray(step.result?.applied) &&
+                step.result.applied.length > 0 &&
                 step.state && (
                   <button
                     type="button"
@@ -172,7 +173,17 @@ export default function EpisodePage() {
   const benchmarkQuery = useBenchmark(runQuery.data?.run.benchmark_id)
   const [selected, setSelected] = useState(-1)
   const [batch, setBatch] = useState<MoveBatch | null>(null)
+  const [resetToken, setResetToken] = useState(1)
 
+  // 先看错误再看 loading：run/benchmark 依赖上游数据，上游失败时它们会一直 pending。
+  const failure =
+    episodeQuery.error ??
+    stepsQuery.error ??
+    runQuery.error ??
+    benchmarkQuery.error
+  if (failure) {
+    return <p className="text-rose-300">{describeError(failure)}</p>
+  }
   if (
     episodeQuery.isPending ||
     stepsQuery.isPending ||
@@ -180,14 +191,6 @@ export default function EpisodePage() {
     benchmarkQuery.isPending
   ) {
     return <p className="text-sm text-slate-400">加载中…</p>
-  }
-  const error =
-    episodeQuery.error ??
-    stepsQuery.error ??
-    runQuery.error ??
-    benchmarkQuery.error
-  if (error) {
-    return <p className="text-rose-300">{describeError(error)}</p>
   }
   const episode = episodeQuery.data
   const steps = stepsQuery.data ?? []
@@ -208,6 +211,7 @@ export default function EpisodePage() {
   function select(index: number) {
     setSelected(index)
     setBatch(null)
+    setResetToken((current) => current + 1)
   }
 
   function playBatch(
@@ -216,6 +220,7 @@ export default function EpisodePage() {
     finalState: CubeState,
   ) {
     setSelected(Math.max(-1, stepIndex - 1))
+    setResetToken((current) => current + 1)
     setBatch({ eventId: Date.now(), moves, state: finalState })
   }
 
@@ -229,7 +234,7 @@ export default function EpisodePage() {
       cube={
         <CubeView
           state={state}
-          resetToken={selected + 2}
+          resetToken={resetToken}
           batch={batch}
           speed={1}
           paused={false}
