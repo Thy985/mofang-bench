@@ -4221,29 +4221,202 @@ git commit -m "feat: 3D 贴纸映射、走法与涂色纯函数"
 ### Task 13: CubeView 与动画队列
 
 **Files:**
+- Create: `frontend/src/cube/animation.ts`
+- Create: `frontend/src/cube/animation.test.ts`
 - Create: `frontend/src/cube/CubeView.tsx`
+- Modify: `frontend/src/cube/facelets.test.ts`
+- Modify: `frontend/src/cube/moves.test.ts`
+- Modify: `frontend/src/cube/repaint.test.ts`
 
 **Interfaces:**
-- Consumes: Task 12 的全部纯函数；`colorHex`、`slotKey`、`paintPlan`、`materialIndex`、`parseMove`、`rotateSlot`、`layerSlots`、`cubieSlots`。
+- Consumes: Task 12 的全部纯函数（`rotateVec`、`rotateSlot`、`layerSlots`、`parseMove`、`MoveSpec`、`cubieSlots`、`sizeOf`、`slotKey`、`FACE_FRAME`、`FACE_ORDER`、`paintPlan`、`materialIndex`、`MATERIAL_NORMALS`）、`colorHex`。
 - Produces:
-  - `CubeView` 组件，props：
+  - `animation.ts`：
     ```ts
-    {
-      state: CubeState | null
-      resetToken: number
-      batch: { eventId: number; moves: string[]; state: CubeState } | null
-      speed: number        // 0.5 / 1 / 2 / 100（instant）
-      paused: boolean
-      skipToken: number
-    }
+    export function rotateOffset(value: Vec3, axis: 0 | 1 | 2, angle: number): Vec3
+    export function specAngle(spec: MoveSpec): number
     ```
+  - `CubeView`、`MoveBatch`、`CubeViewProps`（props 见 Step 5）
   - `data-testid="cube-canvas"`
 
-本任务没有 WebGL 单元测试；动画数学已由 Task 12 覆盖，渲染由 M3 E2E 与手动运行验证。实现后先做 `npm run typecheck` 与 `npm run build`。
+动画必须是**刚性旋转**：层内 cubie 的位置绕轴公转、朝向同步旋转。只转朝向会让 cubie 原地打转再跳到新槽位；位置与落地方向不一致会让每步末尾回跳。CubeView 本身没有 WebGL 单测，靠 `rotateOffset` 的纯函数用例、E2E 与手动运行验收。
 
-- [ ] **Step 1: 实现 CubeView**
+- [ ] **Step 1: 写 animation 失败测试**
 
-新建 `frontend/src/cube/CubeView.tsx`：
+新建 `frontend/src/cube/animation.test.ts`：
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { rotateOffset, specAngle } from './animation'
+import { FACE_ORDER, type Vec3 } from './facelets'
+import { parseMove, rotateVec } from './moves'
+
+const SAMPLES: Vec3[] = [
+  [1, 1, 1],
+  [1, -1, 1],
+  [-1, 1, -1],
+  [0, 1, 0],
+  [1, 0, -1],
+]
+
+const MOVES = FACE_ORDER.flatMap((face) =>
+  [1, 2, 3].map((amount) => ({
+    move: amount === 1 ? face : amount === 2 ? `${face}2` : `${face}'`,
+  })),
+)
+
+describe('rotateOffset', () => {
+  it.each(MOVES)('$move 的动画角度与落地方向一致', ({ move }) => {
+    const spec = parseMove(move, 3)
+    for (const sample of SAMPLES) {
+      const animated = rotateOffset(sample, spec.axis, specAngle(spec))
+      const landed = rotateVec(sample, spec.axis, spec.turns)
+      animated.forEach((value, index) => {
+        expect(value).toBeCloseTo(landed[index], 10)
+      })
+    }
+  })
+
+  it('刚性：绕轴旋转保持到轴的距离', () => {
+    const sample: Vec3 = [1, 2, -3]
+    const length = Math.hypot(...sample)
+    for (const axis of [0, 1, 2] as const) {
+      for (const angle of [0.3, 1.1, Math.PI / 2, 3.7]) {
+        expect(Math.hypot(...rotateOffset(sample, axis, angle))).toBeCloseTo(
+          length,
+          10,
+        )
+      }
+    }
+  })
+
+  it('0 角度保持原位', () => {
+    for (const sample of SAMPLES) {
+      rotateOffset(sample, 1, 0).forEach((value, index) => {
+        expect(value).toBeCloseTo(sample[index], 10)
+      })
+    }
+  })
+})
+```
+
+- [ ] **Step 2: 实现 animation.ts**
+
+新建 `frontend/src/cube/animation.ts`：
+
+```ts
+import type { Vec3 } from './facelets'
+import type { MoveSpec } from './moves'
+
+// 与 rotateVec 同一约定：绕 +axis 的右手旋转，angle 以弧度计。
+export function rotateOffset(
+  value: Vec3,
+  axis: 0 | 1 | 2,
+  angle: number,
+): Vec3 {
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const [x, y, z] = value
+  if (axis === 0) return [x, y * cos - z * sin, y * sin + z * cos]
+  if (axis === 1) return [x * cos + z * sin, y, -x * sin + z * cos]
+  return [x * cos - y * sin, x * sin + y * cos, z]
+}
+
+export function specAngle(spec: MoveSpec): number {
+  return (spec.turns * Math.PI) / 2
+}
+```
+
+- [ ] **Step 3: 运行 animation 测试**
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/cube/animation.test.ts
+```
+
+Expected: 20 passed（6 面 × 3 数量 + 刚性 + 零角）。
+
+- [ ] **Step 4: 补 Task 12 评审携带的覆盖**
+
+在 `frontend/src/cube/facelets.test.ts` 的 `describe` 内追加：
+
+```ts
+  it('maps L stickers to backend coordinates', () => {
+    // L 的 right 是 +z、up 是 +y；镜像写反也能骗过只测 U/R/F 的用例。
+    expect(stickerPlacement('L', 0, 0, 2).position).toEqual([-1, 1, -1])
+    expect(stickerPlacement('L', 1, 1, 2).position).toEqual([-1, -1, 1])
+    expect(stickerPlacement('L', 0, 0, 3).position).toEqual([-2, 2, -2])
+  })
+```
+
+在 `frontend/src/cube/moves.test.ts` 的 `describe` 内追加：
+
+```ts
+  it('parses negative-normal faces', () => {
+    expect(parseMove('L', 2)).toEqual({
+      face: 'L',
+      amount: 1,
+      axis: 0,
+      sign: -1,
+      layer: -1,
+      turns: 1,
+    })
+    expect(rotateSlot([-1, 1, 1], parseMove('L', 2))).toEqual([-1, -1, 1])
+  })
+```
+
+在 `frontend/src/cube/repaint.test.ts` 中把类型导入改为 `import type { ColorName, CubeState } from '../api/types'`，追加 3x3 夹具与用例：
+
+```ts
+function solved3x3(): CubeState {
+  const face = (color: ColorName) => [
+    [color, color, color],
+    [color, color, color],
+    [color, color, color],
+  ]
+  return {
+    cube: '3x3',
+    faces: {
+      U: face('white'),
+      R: face('red'),
+      F: face('green'),
+      D: face('yellow'),
+      L: face('orange'),
+      B: face('blue'),
+    },
+  }
+}
+```
+
+```ts
+  it('paints a solved 3x3', () => {
+    const paints = paintPlan(solved3x3())
+    expect(paints).toHaveLength(54)
+    const corner = paintForSlot(paints, '2,2,2')
+    expect(corner.get(materialIndex([1, 0, 0]))).toBe('red')
+    expect(corner.get(materialIndex([0, 1, 0]))).toBe('white')
+    expect(corner.get(materialIndex([0, 0, 1]))).toBe('green')
+    const frontCenter = paintForSlot(paints, '0,0,2')
+    expect(frontCenter.get(materialIndex([0, 0, 1]))).toBe('green')
+    const upCenter = paintForSlot(paints, '0,2,0')
+    expect(upCenter.get(materialIndex([0, 1, 0]))).toBe('white')
+  })
+```
+
+Run:
+
+```bash
+cd frontend
+npm run test:run -- src/cube
+```
+
+Expected: 全部通过。
+
+- [ ] **Step 5: 实现 CubeView**
+
+新建 `frontend/src/cube/CubeView.tsx`。命令语义：`state` + `resetToken` 一起构成一次“吸附到该局面”的命令（单独变 `state` 不生效）；`batch` 入队，按 `eventId` 去重；`speed >= 100` 视为 instant，直接吸附到队列末状态；`skipToken` 递增一次跳一次；`paused` 冻结帧推进。
 
 ```tsx
 import { OrbitControls } from '@react-three/drei'
@@ -4252,23 +4425,22 @@ import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { CubeState } from '../api/types'
 import { colorHex } from '../lib/format'
-import {
-  cubieSlots,
-  sizeOf,
-  slotKey,
-  type Vec3,
-} from './facelets'
-import { layerSlots, parseMove, rotateSlot } from './moves'
-import {
-  MATERIAL_NORMALS,
-  materialIndex,
-  paintPlan,
-} from './repaint'
-import type { MoveSpec } from './moves'
+import { rotateOffset, specAngle } from './animation'
+import { cubieSlots, sizeOf, slotKey, type Vec3 } from './facelets'
+import { layerSlots, parseMove, rotateSlot, type MoveSpec } from './moves'
+import { MATERIAL_NORMALS, materialIndex, paintPlan } from './repaint'
 
 const CUBIE_SIZE = 0.94
 const DARK = '#0f172a'
 const UNIT = 0.5
+const BASE_DURATION_MS = 220
+const INSTANT_SPEED = 100
+
+const AXES = [
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 1, 0),
+  new THREE.Vector3(0, 0, 1),
+]
 
 export interface MoveBatch {
   eventId: number
@@ -4290,6 +4462,7 @@ interface Entry {
   mesh: THREE.Mesh
   materials: THREE.MeshStandardMaterial[]
   slot: Vec3
+  quat: THREE.Quaternion
 }
 
 interface CurrentMove {
@@ -4301,31 +4474,26 @@ interface CurrentMove {
   entries: Entry[]
 }
 
-function axisVector(axis: 0 | 1 | 2): THREE.Vector3 {
-  return new THREE.Vector3(
-    axis === 0 ? 1 : 0,
-    axis === 1 ? 1 : 0,
-    axis === 2 ? 1 : 0,
-  )
-}
-
 function Scene(props: CubeViewProps) {
   const size = props.state ? sizeOf(props.state.cube) : 2
   const slots = useMemo(() => cubieSlots(size), [size])
-  const group = useRef<THREE.Group>(null!)
+  const group = useRef<THREE.Group | null>(null)
   const entries = useRef<Entry[]>([])
   const queue = useRef<MoveBatch[]>([])
   const current = useRef<CurrentMove | null>(null)
-  const paused = useRef(props.paused)
-  const speed = useRef(props.speed)
+  const pausedRef = useRef(props.paused)
+  const speedRef = useRef(props.speed)
   const latestTarget = useRef<CubeState | null>(props.state)
+  const lastBatchId = useRef<number | null>(null)
+  const scratchPosition = useRef(new THREE.Vector3())
+  const scratchQuat = useRef(new THREE.Quaternion())
 
   useEffect(() => {
-    paused.current = props.paused
+    pausedRef.current = props.paused
   }, [props.paused])
 
   useEffect(() => {
-    speed.current = props.speed
+    speedRef.current = props.speed
   }, [props.speed])
 
   function repaint(state: CubeState) {
@@ -4349,6 +4517,7 @@ function Scene(props: CubeViewProps) {
 
   function place(entry: Entry, slot: Vec3) {
     entry.slot = slot
+    entry.quat.identity()
     entry.mesh.position.set(slot[0] * UNIT, slot[1] * UNIT, slot[2] * UNIT)
     entry.mesh.quaternion.identity()
   }
@@ -4364,7 +4533,8 @@ function Scene(props: CubeViewProps) {
   }
 
   useEffect(() => {
-    if (!group.current) return
+    const parent = group.current
+    if (!parent) return
     const built: Entry[] = slots.map((slot, index) => {
       const geometry = new THREE.BoxGeometry(
         CUBIE_SIZE,
@@ -4381,14 +4551,14 @@ function Scene(props: CubeViewProps) {
       )
       const mesh = new THREE.Mesh(geometry, materials)
       mesh.position.set(slot[0] * UNIT, slot[1] * UNIT, slot[2] * UNIT)
-      group.current!.add(mesh)
-      return { index, mesh, materials, slot }
+      parent.add(mesh)
+      return { index, mesh, materials, slot, quat: new THREE.Quaternion() }
     })
     entries.current = built
     if (latestTarget.current) repaint(latestTarget.current)
     return () => {
       for (const entry of built) {
-        group.current?.remove(entry.mesh)
+        parent.remove(entry.mesh)
         entry.mesh.geometry.dispose()
         entry.materials.forEach((material) => material.dispose())
       }
@@ -4396,53 +4566,28 @@ function Scene(props: CubeViewProps) {
     }
   }, [slots])
 
+  // state 只在 resetToken 递增时吸附；实时 state 的更新不得打断动画。
+  // 事件 id 在同一 run 内单调，换 run/换题会从 1 重来，所以吸附时清掉去重标记。
   useEffect(() => {
-    if (props.state) {
-      latestTarget.current = props.state
-      snapTo(props.state)
-    }
-  }, [props.resetToken, props.state])
+    if (!props.state) return
+    lastBatchId.current = null
+    snapTo(props.state)
+  }, [props.resetToken])
 
   useEffect(() => {
-    if (props.batch) {
-      latestTarget.current = props.batch.state
-      queue.current.push(props.batch)
-    }
+    const batch = props.batch
+    if (!batch) return
+    if (batch.eventId === lastBatchId.current) return
+    lastBatchId.current = batch.eventId
+    latestTarget.current = batch.state
+    queue.current.push(batch)
   }, [props.batch])
 
   useEffect(() => {
-    if (props.skipToken > 0) {
-      snapTo(latestTarget.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (props.skipToken > 0) snapTo(latestTarget.current)
   }, [props.skipToken])
 
-  function startNextMove() {
-    const batch = queue.current[0]
-    if (!batch) return
-    const spec = parseMove(batch.moves[0], sizeOf(batch.state.cube))
-    const keys = new Set(
-      layerSlots(
-        entries.current.map((entry) => entry.slot),
-        spec,
-      ).map(slotKey),
-    )
-    current.current = {
-      batch,
-      moveIndex: 0,
-      spec,
-      elapsed: 0,
-      duration: speed.current >= 100 ? 0 : 220 / speed.current,
-      entries: entries.current.filter((entry) =>
-        keys.has(slotKey(entry.slot)),
-      ),
-    }
-  }
-
-  function startMove(
-    batch: MoveBatch,
-    moveIndex: number,
-  ): CurrentMove {
+  function beginMove(batch: MoveBatch, moveIndex: number): CurrentMove {
     const spec = parseMove(batch.moves[moveIndex], sizeOf(batch.state.cube))
     const keys = new Set(
       layerSlots(
@@ -4455,47 +4600,81 @@ function Scene(props: CubeViewProps) {
       moveIndex,
       spec,
       elapsed: 0,
-      duration: speed.current >= 100 ? 0 : 220 / speed.current,
+      duration: BASE_DURATION_MS / speedRef.current,
       entries: entries.current.filter((entry) =>
         keys.has(slotKey(entry.slot)),
       ),
     }
   }
 
-  function finishMove(move: CurrentMove) {
+  function startNextMove() {
+    const batch = queue.current[0]
+    if (!batch) return
+    current.current = beginMove(batch, 0)
+  }
+
+  function applyFrame(move: CurrentMove, angle: number) {
+    const quat = scratchQuat.current.setFromAxisAngle(
+      AXES[move.spec.axis],
+      angle,
+    )
+    const position = scratchPosition.current
     for (const entry of move.entries) {
-      place(entry, rotateSlot(entry.slot, move.spec))
+      const [x, y, z] = rotateOffset(entry.slot, move.spec.axis, angle)
+      position.set(x * UNIT, y * UNIT, z * UNIT)
+      entry.mesh.position.copy(position)
+      entry.mesh.quaternion.copy(quat).multiply(entry.quat)
     }
+  }
+
+  function commitMove(move: CurrentMove) {
+    const full = scratchQuat.current.setFromAxisAngle(
+      AXES[move.spec.axis],
+      specAngle(move.spec),
+    )
+    for (const entry of move.entries) {
+      entry.quat.premultiply(full)
+      entry.slot = rotateSlot(entry.slot, move.spec)
+      entry.mesh.position.set(
+        entry.slot[0] * UNIT,
+        entry.slot[1] * UNIT,
+        entry.slot[2] * UNIT,
+      )
+      entry.mesh.quaternion.copy(entry.quat)
+    }
+  }
+
+  function finishMove(move: CurrentMove) {
+    commitMove(move)
     const nextIndex = move.moveIndex + 1
     if (nextIndex < move.batch.moves.length) {
-      current.current = startMove(move.batch, nextIndex)
+      current.current = beginMove(move.batch, nextIndex)
       return
     }
     queue.current.shift()
     current.current = null
+    for (const entry of entries.current) {
+      entry.quat.identity()
+      entry.mesh.quaternion.identity()
+    }
     repaint(move.batch.state)
   }
 
   useFrame((_, delta) => {
-    if (paused.current) return
-    if (!current.current) {
-      if (queue.current.length === 0) return
-      startNextMove()
-      if (!current.current) return
-    }
-    const move = current.current
-    if (move.duration <= 0) {
-      finishMove(move)
+    if (pausedRef.current) return
+    if (speedRef.current >= INSTANT_SPEED) {
+      if (current.current || queue.current.length > 0) {
+        snapTo(latestTarget.current)
+      }
       return
     }
+    if (!current.current) startNextMove()
+    const move = current.current
+    if (!move) return
     move.elapsed += delta * 1000
     const progress = Math.min(1, move.elapsed / move.duration)
     const eased = progress * progress * (3 - 2 * progress)
-    const angle = ((move.spec.turns * Math.PI) / 2) * eased
-    const axis = axisVector(move.spec.axis)
-    for (const entry of move.entries) {
-      entry.mesh.quaternion.setFromAxisAngle(axis, angle)
-    }
+    applyFrame(move, specAngle(move.spec) * eased)
     if (progress >= 1) finishMove(move)
   })
 
@@ -4509,6 +4688,8 @@ function Scene(props: CubeViewProps) {
         enablePan={false}
         minDistance={4}
         maxDistance={14}
+        minPolarAngle={Math.PI / 6}
+        maxPolarAngle={(Math.PI * 5) / 6}
         enableDamping
       />
     </>
@@ -4532,7 +4713,7 @@ export function CubeView(props: CubeViewProps) {
 }
 ```
 
-- [ ] **Step 2: 类型检查与构建**
+- [ ] **Step 6: 类型检查与构建**
 
 Run:
 
@@ -4542,11 +4723,24 @@ npm run typecheck
 npm run build
 ```
 
-Expected: 通过。若 `panel`/JSX 类型报错，确认 `@react-three/fiber` 版本 ≥9 且 `three` 类型已随包提供；不要把 `three` 降到 r150 之前。
+Expected: 通过。若 JSX 类型报错，确认 `@react-three/fiber` 版本 ≥9 且 `three` 类型已随包提供；不要把 `three` 降到 r150 之前。
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 7: 跑前端全量测试**
+
+Run:
 
 ```bash
+cd frontend
+npm run test:run
+```
+
+Expected: 全部通过（新增 animation 20 条 + L 面/负号/3x3 各 1 条）。
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add frontend/src/cube/animation.ts frontend/src/cube/animation.test.ts frontend/src/cube/facelets.test.ts frontend/src/cube/moves.test.ts frontend/src/cube/repaint.test.ts
+git commit -m "feat: 动画旋转纯函数与贴纸覆盖补强"
 git add frontend/src/cube/CubeView.tsx
 git commit -m "feat: 3D cube 视图与动画队列"
 ```

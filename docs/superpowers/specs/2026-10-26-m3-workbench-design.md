@@ -51,7 +51,7 @@
 frontend/
   src/
     api/            client.ts、types.ts、queries.ts
-    cube/           facelets.ts、moves.ts、CubeView.tsx、animationQueue.ts
+    cube/           facelets.ts、moves.ts、animation.ts、CubeView.tsx
     hooks/          useRunEvents.ts
     pages/          ProvidersPage、BenchmarksPage、NewRunPage、RunsPage、
                     RunPage、EpisodePage
@@ -153,8 +153,8 @@ FACE_FRAME = {
 - 每个 cubie 用略小于间距的立方体网格与六面材质（首版 `BoxGeometry`，圆角作为视觉打磨后置）；外露面按 facelet 上色，内侧深色。
 - 颜色映射：U 白、R 红、F 绿、D 黄、L 橙、B 蓝。
 - 相机与 OrbitControls：固定初始视角可同时看到 U/F/R；禁用平移，限制极角；深色背景。
-- `CubeView` 暴露命令：`snapTo(state)`、`enqueue(moves, state)`、`setSpeed(multiplier)`、`pause()`、`resume()`、`skipToLatest()`。
-- UI 控件：0.5×/1×/2×/instant、暂停/继续、跳到最新、是否显示面标签。
+- `CubeView` 用受控 props 表达命令：`state` + `resetToken`（吸附）、`batch`（入队）、`speed`、`paused`、`skipToken`（跳到最新）；数据流保持单向。
+- UI 控件：0.5×/1×/2×/instant、暂停/继续、跳到最新。面标签开关后置，首版不做。
 
 ### 6.3 上色与动画
 
@@ -162,9 +162,9 @@ FACE_FRAME = {
 - **动画**：
   1. 解析 move：面 → 轴、法线符号、层（坐标等于 `sign*(size-1)`）。
   2. 角度：`turns = (-sign * amount) mod 4`，绕 `+axis` 右手旋转 `turns*90°`。
-  3. 该层 cubie 以四元数从 0 转到目标角；时长约 220ms / speed。
-  4. 落地：层内 cubie 的槽位按同一整数旋转映射；位置吸附网格，四元数重置为单位。
-  5. 一个批次全部播完后，用事件里的权威 `state` 重涂所有 cubie。
+  3. 该层 cubie 刚性旋转：位置 = 槽位偏移绕同轴、同角旋转；朝向用同一旋转四元数，并累计到批次末；时长约 220ms / speed。
+  4. 落地：层内 cubie 的槽位按同一整数旋转映射；位置吸附网格，朝向累计四元数保留到批次末。
+  5. 一个批次全部播完后，先把朝向重置为单位四元数，再用事件里的权威 `state` 重涂所有 cubie（重涂以单位朝向为前提）。
 - 批次内不做中途重涂：中间状态未下发，刚性旋转已由前一批次末的权威状态决定。
 - 队列串行；新批次入队不打断当前批次。`instant` 直接按批次末状态吸附。
 - 切题、重连、`run.finished`：清空队列；重连时直接吸附到 snapshot 状态。
@@ -175,7 +175,8 @@ FACE_FRAME = {
 - `moveSpec(move)`：R/R'/R2/U/F 等轴、层、方向。
 - `rotateSlot(slot, move)`：旋转后槽位与后端 `rotate()` 对比。
 - `stickerColor(state, slot, normal)`：解出态与已知 R 后状态的配色。
-- 动画队列 reducer：批次顺序、暂停、跳过、切题清空。
+- 动画数学（连续角度旋转）抽成纯函数：90° 的整数倍必须与 `rotateSlot` 的整数映射一致，并保持到轴的距离。
+- 动画队列 reducer：批次顺序、暂停、跳过、切题清空（列表项由 E2E 与手动运行验收）。
 
 ## 7. 页面与交互
 
