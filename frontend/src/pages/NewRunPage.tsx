@@ -3,7 +3,11 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { describeError } from '../lib/errors'
-import { readNumberInRange, readPositiveInt } from '../lib/validate'
+import {
+  readNumberInRange,
+  readPositiveInt,
+  readPositiveNumber,
+} from '../lib/validate'
 import { useBenchmarks, useProviders, qk } from '../api/queries'
 import type {
   BenchmarkSummary,
@@ -31,6 +35,23 @@ const DEFAULTS: Record<CubeKind, Budget> = {
   },
 }
 
+type BudgetKey =
+  | 'max_moves'
+  | 'max_tool_calls'
+  | 'max_tokens'
+  | 'max_seconds'
+  | 'turn_timeout'
+
+function toBudgetForm(budget: Budget): Record<BudgetKey, string> {
+  return {
+    max_moves: String(budget.max_moves),
+    max_tool_calls: String(budget.max_tool_calls),
+    max_tokens: String(budget.max_tokens),
+    max_seconds: String(budget.max_seconds),
+    turn_timeout: String(budget.turn_timeout),
+  }
+}
+
 export interface NewRunViewProps {
   providers: Provider[]
   benchmarks: BenchmarkSummary[]
@@ -51,8 +72,8 @@ export function NewRunView({
     initialBenchmark?.id ?? '',
   )
   const [toolMode, setToolMode] = useState<ToolMode>('both')
-  const [budget, setBudget] = useState<Budget>(
-    DEFAULTS[initialBenchmark?.cube ?? '2x2'],
+  const [budget, setBudget] = useState<Record<BudgetKey, string>>(
+    toBudgetForm(DEFAULTS[initialBenchmark?.cube ?? '2x2']),
   )
   const [temperature, setTemperature] = useState('')
   const [maxTokens, setMaxTokens] = useState('')
@@ -60,27 +81,31 @@ export function NewRunView({
   const [submitting, setSubmitting] = useState(false)
   const selected = benchmarks.find((item) => item.id === benchmarkId)
 
-  useEffect(() => {
-    if (selected) setBudget(DEFAULTS[selected.cube])
-  }, [selected?.id, selected?.cube])
+  const selectedId = selected?.id
+  const selectedCube = selected?.cube
 
-  function updateBudget(key: keyof Budget, value: string) {
-    setBudget((current) => ({ ...current, [key]: Number(value) }))
+  useEffect(() => {
+    if (selected) setBudget(toBudgetForm(DEFAULTS[selected.cube]))
+  }, [selectedId, selectedCube])
+
+  function updateBudget(key: BudgetKey, value: string) {
+    setBudget((current) => ({ ...current, [key]: value }))
   }
 
-  // `Number('')` 是 0：清空输入必须在校验阶段拦下，否则 turn_timeout=0 会让每轮立刻超时
-  function budgetProblem(): string | null {
+  // 预算用字符串存：数字存法下清空输入会被 React 立刻写回 0，输入框永远清不干净
+  function parseBudget(): Budget | string {
+    const parsed: Partial<Budget> = {}
     for (const key of ['max_moves', 'max_tool_calls', 'max_tokens'] as const) {
-      if (!Number.isInteger(budget[key]) || budget[key] < 1) {
-        return `${key} 必须是正整数`
-      }
+      const value = readPositiveInt(budget[key])
+      if (value === null) return `${key} 必须是正整数`
+      parsed[key] = value
     }
     for (const key of ['max_seconds', 'turn_timeout'] as const) {
-      if (!Number.isFinite(budget[key]) || budget[key] <= 0) {
-        return `${key} 必须是正数`
-      }
+      const value = readPositiveNumber(budget[key])
+      if (value === null) return `${key} 必须是正数`
+      parsed[key] = value
     }
-    return null
+    return parsed as Budget
   }
 
   // 留空表示沿用 provider 的默认参数
@@ -106,9 +131,9 @@ export function NewRunView({
       setFormError('请选择 provider 和 benchmark')
       return
     }
-    const problem = budgetProblem()
-    if (problem) {
-      setFormError(problem)
+    const parsedBudget = parseBudget()
+    if (typeof parsedBudget === 'string') {
+      setFormError(parsedBudget)
       return
     }
     const parsedParams = parseParams()
@@ -123,7 +148,7 @@ export function NewRunView({
         benchmark_id: benchmarkId,
         tool_mode: toolMode,
         params: parsedParams,
-        budget,
+        budget: parsedBudget,
       })
     } catch (err) {
       setFormError(describeError(err))
@@ -145,10 +170,7 @@ export function NewRunView({
           还没有基准集，先到 <Link to="/benchmarks">Benchmarks</Link> 生成。
         </p>
       )}
-      {/* 预算框是数值 state，清空会回落成 0；交给 budgetProblem 统一出中文，
-          否则 min=1 的原生校验会静默吞掉 submit，alert 永远不出现 */}
       <form
-        noValidate
         onSubmit={handleSubmit}
         className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
       >
@@ -215,7 +237,7 @@ export function NewRunView({
                   type="number"
                   min={1}
                   className="rounded bg-slate-950 px-2 py-1.5"
-                  value={budget[key] as number}
+                  value={budget[key]}
                   onChange={(event) =>
                     updateBudget(key, event.target.value)
                   }

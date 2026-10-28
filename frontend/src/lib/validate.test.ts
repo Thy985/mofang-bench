@@ -3,6 +3,7 @@ import {
   readInteger,
   readNumberInRange,
   readPositiveInt,
+  readPositiveNumber,
 } from './validate'
 
 describe('readPositiveInt', () => {
@@ -20,6 +21,20 @@ describe('readPositiveInt', () => {
     expect(readPositiveInt('0')).toBeNull()
     expect(readPositiveInt('-3')).toBeNull()
     expect(readPositiveInt('Infinity')).toBeNull()
+  })
+})
+
+describe('readPositiveNumber', () => {
+  it('parses positive numbers, decimals included', () => {
+    expect(readPositiveNumber('1.5')).toBe(1.5)
+    expect(readPositiveNumber('120')).toBe(120)
+  })
+
+  it('rejects blanks, non-positive and non-numeric values', () => {
+    expect(readPositiveNumber('')).toBeNull()
+    expect(readPositiveNumber('0')).toBeNull()
+    expect(readPositiveNumber('-1')).toBeNull()
+    expect(readPositiveNumber('abc')).toBeNull()
   })
 })
 

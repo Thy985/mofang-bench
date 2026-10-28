@@ -11,6 +11,14 @@ export function readPositiveInt(value: string): number | null {
   return parsed
 }
 
+export function readPositiveNumber(value: string): number | null {
+  const parsed = Number(value)
+  if (value.trim() === '' || !Number.isFinite(parsed) || parsed <= 0) {
+    return null
+  }
+  return parsed
+}
+
 export function readNumberInRange(
   value: string,
   min: number,
