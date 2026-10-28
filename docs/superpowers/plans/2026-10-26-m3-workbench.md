@@ -2652,7 +2652,7 @@ git commit -m "feat: Providers 页面"
   - `BenchmarksView`、`BenchmarkDetailView`
   - `data-testid="benchmark-task-row"`
   - 409 错误在表单内显示（按 `err.status === 409` 判别，`JSON.parse(err.detail)` 取回链 id；文案「已存在同 id 题集」）
-  - `readPositiveInt(value: string): number | null`、`readNumberInRange(value, min, max): number | null` —— 纯函数，不碰 React、不出文案；文案仍由页面自己出中文。Task 9 的组件内 `readPositiveInt` 迁到这里，Task 11 直接复用。
+  - `readPositiveInt(value: string): number | null`、`readNumberInRange(value, min, max): number | null`、`readPositiveNumber(value: string): number | null` —— 纯函数，不碰 React、不出文案；文案仍由页面自己出中文。Task 9 的组件内 `readPositiveInt` 迁到这里，Task 11 直接复用。
   - 站内跳转一律用 `react-router-dom` 的 `Link`（含 409 回链），不用裸 `<a>`：`<a>` 会整页重载、清空 React Query 缓存，Task 15 的 Run 页若照抄会丢掉活的 `EventSource` 与 reducer 状态。视图用到 `Link` 时测试要 `MemoryRouter` 包裹。
 
 - [ ] **Step 1: 写失败测试**
@@ -3130,13 +3130,15 @@ git commit -m "feat: Benchmarks 列表、生成与详情"
 - Create: `frontend/src/pages/NewRunPage.tsx`
 - Create: `frontend/src/pages/NewRunPage.test.tsx`
 - Create: `frontend/src/pages/RunsPage.tsx`
+- Modify: `frontend/src/lib/validate.ts`、`frontend/src/lib/validate.test.ts`（新增 `readPositiveNumber` 及其用例）
 - Modify: `frontend/src/App.tsx`
 
 **Interfaces:**
-- Consumes: `useProviders()`、`useBenchmarks()`、`useRuns()`、`api.runs.create`、`qk.runs`
+- Consumes: `useProviders()`、`useBenchmarks()`、`useRuns()`、`api.runs.create`、`qk.runs`、`readPositiveInt`/`readPositiveNumber`/`readNumberInRange`
 - Produces:
   - `NewRunView`、`RunsView`
-  - 默认预算：2x2 `30/50/300000/300/120`，3x3 `100/150/1000000/900/120`
+  - 默认预算：2x2 `30/50/300000/300/120`，3x3 `100/150/1000000/900/120`；预算输入以字符串保存，提交时经 `lib/validate` 校验（清空即报错，不允许 0 或负数通过）
+  - 可选参数覆盖（spec §7.4）：`params_temperature`（0–2）与 `params_max_tokens`（正整数），留空则 `params` 不含该键，沿用 provider 默认
   - `data-testid="run-row"`
 
 - [ ] **Step 1: 写失败测试**
@@ -3144,8 +3146,10 @@ git commit -m "feat: Benchmarks 列表、生成与详情"
 新建 `frontend/src/pages/NewRunPage.test.tsx`：
 
 ```tsx
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   BenchmarkSummary,
@@ -3154,6 +3158,11 @@ import type {
 } from '../api/types'
 import { NewRunView } from './NewRunPage'
 import { RunsView } from './RunsPage'
+
+// 视图里用到 Link/useSearchParams，裸 render 会抛；本文件所有用例都用 renderView 包裹
+function renderView(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>)
+}
 
 const provider: Provider = {
   id: 'p1',
@@ -3214,7 +3223,7 @@ describe('NewRunView', () => {
   it('uses 2x2 defaults and submits overrides', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
+    renderView(
       <NewRunView
         providers={[provider]}
         benchmarks={benchmarks}
@@ -3237,7 +3246,7 @@ describe('NewRunView', () => {
 
   it('switches defaults when a 3x3 benchmark is selected', async () => {
     const user = userEvent.setup()
-    render(
+    renderView(
       <NewRunView
         providers={[provider]}
         benchmarks={benchmarks}
@@ -3274,9 +3283,48 @@ describe('NewRunView', () => {
   )
 })
 
+  it('sends optional param overrides when provided', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    renderView(
+      <NewRunView
+        providers={[provider]}
+        benchmarks={benchmarks}
+        onCreate={onCreate}
+      />,
+    )
+    await user.type(screen.getByLabelText('params_temperature'), '0.5')
+    await user.type(screen.getByLabelText('params_max_tokens'), '2048')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].params).toEqual({
+      temperature: 0.5,
+      max_tokens: 2048,
+    })
+  })
+
+  it('rejects an out-of-range temperature', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    renderView(
+      <NewRunView
+        providers={[provider]}
+        benchmarks={benchmarks}
+        onCreate={onCreate}
+      />,
+    )
+    await user.type(screen.getByLabelText('params_temperature'), '3')
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'temperature 必须是 0 到 2 之间的数值',
+    )
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+})
+
 describe('RunsView', () => {
   it('maps provider and benchmark names', () => {
-    render(
+    renderView(
       <RunsView
         runs={[run]}
         providers={[provider]}
@@ -3305,6 +3353,11 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { describeError } from '../lib/errors'
+import {
+  readNumberInRange,
+  readPositiveInt,
+  readPositiveNumber,
+} from '../lib/validate'
 import { useBenchmarks, useProviders, qk } from '../api/queries'
 import type {
   BenchmarkSummary,
@@ -3332,6 +3385,23 @@ const DEFAULTS: Record<CubeKind, Budget> = {
   },
 }
 
+type BudgetKey =
+  | 'max_moves'
+  | 'max_tool_calls'
+  | 'max_tokens'
+  | 'max_seconds'
+  | 'turn_timeout'
+
+function toBudgetForm(budget: Budget): Record<BudgetKey, string> {
+  return {
+    max_moves: String(budget.max_moves),
+    max_tool_calls: String(budget.max_tool_calls),
+    max_tokens: String(budget.max_tokens),
+    max_seconds: String(budget.max_seconds),
+    turn_timeout: String(budget.turn_timeout),
+  }
+}
+
 export interface NewRunViewProps {
   providers: Provider[]
   benchmarks: BenchmarkSummary[]
@@ -3352,34 +3422,53 @@ export function NewRunView({
     initialBenchmark?.id ?? '',
   )
   const [toolMode, setToolMode] = useState<ToolMode>('both')
-  const [budget, setBudget] = useState<Budget>(
-    DEFAULTS[initialBenchmark?.cube ?? '2x2'],
+  const [budget, setBudget] = useState<Record<BudgetKey, string>>(
+    toBudgetForm(DEFAULTS[initialBenchmark?.cube ?? '2x2']),
   )
+  const [temperature, setTemperature] = useState('')
+  const [maxTokens, setMaxTokens] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const selected = benchmarks.find((item) => item.id === benchmarkId)
 
   useEffect(() => {
-    if (selected) setBudget(DEFAULTS[selected.cube])
+    if (selected) setBudget(toBudgetForm(DEFAULTS[selected.cube]))
   }, [selected?.id, selected?.cube])
 
-  function updateBudget(key: keyof Budget, value: string) {
-    setBudget((current) => ({ ...current, [key]: Number(value) }))
+  function updateBudget(key: BudgetKey, value: string) {
+    setBudget((current) => ({ ...current, [key]: value }))
   }
 
-  // `Number('')` 是 0：清空输入必须在校验阶段拦下，否则 turn_timeout=0 会让每轮立刻超时
-  function budgetProblem(): string | null {
+  // 预算用字符串存：数字存法下清空输入会被 React 立刻写回 0，输入框永远清不干净
+  function parseBudget(): Budget | string {
+    const parsed: Partial<Budget> = {}
     for (const key of ['max_moves', 'max_tool_calls', 'max_tokens'] as const) {
-      if (!Number.isInteger(budget[key]) || budget[key] < 1) {
-        return `${key} 必须是正整数`
-      }
+      const value = readPositiveInt(budget[key])
+      if (value === null) return `${key} 必须是正整数`
+      parsed[key] = value
     }
     for (const key of ['max_seconds', 'turn_timeout'] as const) {
-      if (!Number.isFinite(budget[key]) || budget[key] <= 0) {
-        return `${key} 必须是正数`
-      }
+      const value = readPositiveNumber(budget[key])
+      if (value === null) return `${key} 必须是正数`
+      parsed[key] = value
     }
-    return null
+    return parsed as Budget
+  }
+
+  // 留空表示沿用 provider 的默认参数
+  function parseParams(): Record<string, number> | string {
+    const params: Record<string, number> = {}
+    if (temperature.trim() !== '') {
+      const value = readNumberInRange(temperature, 0, 2)
+      if (value === null) return 'temperature 必须是 0 到 2 之间的数值'
+      params.temperature = value
+    }
+    if (maxTokens.trim() !== '') {
+      const value = readPositiveInt(maxTokens)
+      if (value === null) return 'max_tokens 必须是正整数'
+      params.max_tokens = value
+    }
+    return params
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -3389,9 +3478,14 @@ export function NewRunView({
       setFormError('请选择 provider 和 benchmark')
       return
     }
-    const problem = budgetProblem()
-    if (problem) {
-      setFormError(problem)
+    const parsedBudget = parseBudget()
+    if (typeof parsedBudget === 'string') {
+      setFormError(parsedBudget)
+      return
+    }
+    const parsedParams = parseParams()
+    if (typeof parsedParams === 'string') {
+      setFormError(parsedParams)
       return
     }
     setSubmitting(true)
@@ -3400,8 +3494,8 @@ export function NewRunView({
         provider_id: providerId,
         benchmark_id: benchmarkId,
         tool_mode: toolMode,
-        params: {},
-        budget,
+        params: parsedParams,
+        budget: parsedBudget,
       })
     } catch (err) {
       setFormError(describeError(err))
@@ -3490,7 +3584,7 @@ export function NewRunView({
                   type="number"
                   min={1}
                   className="rounded bg-slate-950 px-2 py-1.5"
-                  value={budget[key] as number}
+                  value={budget[key]}
                   onChange={(event) =>
                     updateBudget(key, event.target.value)
                   }
@@ -3498,6 +3592,35 @@ export function NewRunView({
                 <span className="text-slate-500">{label}</span>
               </label>
             ))}
+          </div>
+        </div>
+        <div className="grid gap-2 md:col-span-2">
+          <p className="text-sm text-slate-400">
+            可选参数覆盖（留空沿用 provider 默认）
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <label className="grid gap-1 text-xs">
+              <span>temperature</span>
+              <input
+                aria-label="params_temperature"
+                className="rounded bg-slate-950 px-2 py-1.5"
+                value={temperature}
+                onChange={(event) => setTemperature(event.target.value)}
+              />
+              <span className="text-slate-500">0 到 2，留空不覆盖</span>
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span>max_tokens</span>
+              <input
+                aria-label="params_max_tokens"
+                type="number"
+                min={1}
+                className="rounded bg-slate-950 px-2 py-1.5"
+                value={maxTokens}
+                onChange={(event) => setMaxTokens(event.target.value)}
+              />
+              <span className="text-slate-500">留空不覆盖</span>
+            </label>
           </div>
         </div>
         <div className="flex items-center gap-3 md:col-span-2">
