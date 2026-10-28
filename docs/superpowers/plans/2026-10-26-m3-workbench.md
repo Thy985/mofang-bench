@@ -4744,7 +4744,7 @@ cd frontend
 npm run test:run
 ```
 
-Expected: 全部通过（新增 animation 20 条 + L 面/负号/3x3 各 1 条）。
+Expected: 全部通过（新增 animation 21 条 + L 面/负号/3x3 各 1 条）。
 
 - [ ] **Step 8: 提交**
 
