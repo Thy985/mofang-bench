@@ -7427,6 +7427,7 @@ git commit -m "feat: Episode 单题回放"
 - Create: `tests/test_fake_openai_server.py`
 - Create: `frontend/playwright.config.ts`
 - Create: `frontend/e2e/workbench.spec.ts`
+- Modify: `.gitignore`
 
 **Interfaces:**
 - mock：`POST /v1/chat/completions`，`GET /health`
@@ -7607,6 +7608,8 @@ if __name__ == "__main__":
 
 `build_completion` 的三个分支分别是：首次对话返回 `apply_moves` 工具调用；已有 tool 结果时返回 `solved` 文本；probe（无 `apply_moves` 工具）返回 `ok` 文本。
 
+E2E 用 2x2 / depth 1 / seed 3，`generate_scramble` 对它的产出是 `["R'"]`，mock 默认动作就是 `R'`，所以一回合即解出。生成器或种子若变化，E2E 会在结果断言处失败——这是有意的强约束，不要放宽成“跑完即可”。
+
 - [ ] **Step 4: 运行 mock 测试**
 
 Run: `uv run pytest tests/test_fake_openai_server.py -q`
@@ -7667,6 +7670,13 @@ export default defineConfig({
     },
   ],
 })
+```
+
+在仓库根 `.gitignore` 追加（Playwright 失败时留下的产物不应入库；数据库已由 `data/*.db*` 覆盖）：
+
+```
+test-results/
+playwright-report/
 ```
 
 - [ ] **Step 6: 写 E2E 用例**
@@ -7740,7 +7750,7 @@ npx playwright install chromium
 npm run e2e
 ```
 
-Expected: 1 passed。若 8000/5173/20129 被占用，先停止遗留进程；不要用 `reuseExistingServer: true` 掩盖端口冲突。
+Expected: 1 passed。若 8000/5173/20129 被占用，先停止遗留进程；不要用 `reuseExistingServer: true` 掩盖端口冲突。若浏览器下载被网络阻断，报告 BLOCKED 并附原始错误，不要自行切换 `channel`。
 
 - [ ] **Step 8: 提交**
 
