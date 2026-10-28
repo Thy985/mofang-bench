@@ -5833,18 +5833,35 @@ git commit -m "feat: 实时事件 reducer 与 useRunEvents"
   - `data-testid`：`run-status`、`run-result`、`progress-path`、`tool-log`、`export-json`、`export-csv`、`export-md`、`episode-replay-link`
   - 速度档：0.5 / 1 / 2 / 100（instant）
 
-- [ ] **Step 1: 写组件与结果页失败测试**
+- [ ] **Step 1: 写组件、结果页与页面接线失败测试**
 
 新建 `frontend/src/pages/RunPage.test.tsx`：
 
 ```tsx
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
-import type { BenchmarkDetail, Episode, Report, Run } from '../api/types'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type {
+  BenchmarkDetail,
+  CubeState,
+  Episode,
+  Report,
+  Run,
+} from '../api/types'
 import { initialLiveState, type LiveState } from '../hooks/liveReducer'
-import { RunLivePanel } from './RunPage'
+import RunPage, { RunLivePanel } from './RunPage'
 import { ResultView } from '../components/ResultView'
+
+vi.mock('../cube/CubeView', () => ({
+  CubeView: (props: { state: CubeState | null; resetToken: number }) => (
+    <div
+      data-testid="cube-stub"
+      data-cube={props.state?.cube ?? 'none'}
+      data-token={props.resetToken}
+    />
+  ),
+}))
 
 const run: Run = {
   id: 'run12345678',
@@ -5921,6 +5938,41 @@ const benchmark: BenchmarkDetail = {
   ],
 }
 
+const report: Report = {
+  run_id: run.id,
+  provider_id: run.provider_id,
+  benchmark_id: run.benchmark_id,
+  status: 'finished',
+  started_at: run.started_at,
+  finished_at: '2026-10-26T00:00:10+00:00',
+  benchmark_hash: 'hash',
+  benchmark_total_tasks: 1,
+  partial: false,
+  totals: {
+    tasks: 1,
+    solved: 1,
+    solve_rate: 1,
+    ci95: [0.2, 1],
+  },
+  by_bin: {
+    '1': {
+      total: 1,
+      solved: 1,
+      solve_rate: 1,
+      ci95: [0.2, 1],
+      mean_moves: 1,
+    },
+  },
+  episodes: [
+    {
+      ...episode,
+      status: 'solved',
+      solved: true,
+      moves_used: 1,
+    },
+  ],
+}
+
 function liveState(): LiveState {
   return {
     ...initialLiveState(),
@@ -5974,41 +6026,6 @@ describe('RunLivePanel', () => {
 })
 
 describe('ResultView', () => {
-  const report: Report = {
-    run_id: run.id,
-    provider_id: run.provider_id,
-    benchmark_id: run.benchmark_id,
-    status: 'finished',
-    started_at: run.started_at,
-    finished_at: '2026-10-26T00:00:10+00:00',
-    benchmark_hash: 'hash',
-    benchmark_total_tasks: 1,
-    partial: false,
-    totals: {
-      tasks: 1,
-      solved: 1,
-      solve_rate: 1,
-      ci95: [0.2, 1],
-    },
-    by_bin: {
-      '1': {
-        total: 1,
-        solved: 1,
-        solve_rate: 1,
-        ci95: [0.2, 1],
-        mean_moves: 1,
-      },
-    },
-    episodes: [
-      {
-        ...episode,
-        status: 'solved',
-        solved: true,
-        moves_used: 1,
-      },
-    ],
-  }
-
   it('renders totals, rows and export links', () => {
     render(
       <MemoryRouter>
@@ -6034,6 +6051,125 @@ describe('ResultView', () => {
       'href',
       '/api/runs/run12345678/report',
     )
+  })
+})
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status < 400,
+    status,
+    statusText: status < 400 ? 'OK' : 'Error',
+    json: async () => body,
+  }
+}
+
+class FakeEventSource {
+  static instances: FakeEventSource[] = []
+  listeners = new Map<string, EventListener>()
+  onopen: (() => void) | null = null
+  onerror: (() => void) | null = null
+  closed = false
+  url: string
+
+  constructor(url: string) {
+    this.url = url
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    this.listeners.set(type, listener)
+  }
+
+  close() {
+    this.closed = true
+  }
+
+  emit(type: string, data: unknown) {
+    const event = { data: JSON.stringify(data) } as MessageEvent
+    this.listeners.get(type)?.(event as Event)
+  }
+}
+
+afterEach(() => {
+  FakeEventSource.instances = []
+  vi.unstubAllGlobals()
+})
+
+function renderPage(options: { snapshotState: CubeState | null }) {
+  const fetchMock = vi.fn(async (input: string) => {
+    if (input === '/api/runs/run12345678') {
+      return jsonResponse({ run, episodes: [episode] })
+    }
+    if (input === '/api/runs/run12345678/snapshot') {
+      return jsonResponse({
+        run,
+        episodes: [episode],
+        last_event_id: 3,
+        current_state: options.snapshotState,
+      })
+    }
+    if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
+    if (input === '/api/providers') return jsonResponse([])
+    if (input === '/api/runs/run12345678/report') {
+      return jsonResponse(report)
+    }
+    return jsonResponse({ detail: 'not found' }, 404)
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  vi.stubGlobal('EventSource', FakeEventSource)
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/runs/run12345678']}>
+        <Routes>
+          <Route path="/runs/:id" element={<RunPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+describe('RunPage', () => {
+  it('falls back to the task state when the snapshot has no live state', async () => {
+    renderPage({ snapshotState: null })
+    await waitFor(() =>
+      expect(screen.getByTestId('cube-stub')).toHaveAttribute(
+        'data-cube',
+        '2x2',
+      ),
+    )
+  })
+
+  it('snaps the cube to the final state when the run finishes', async () => {
+    renderPage({ snapshotState: benchmark.tasks[0].state })
+    await waitFor(() =>
+      expect(screen.getByTestId('cube-stub')).toHaveAttribute(
+        'data-token',
+        '1',
+      ),
+    )
+    await waitFor(() =>
+      expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    const cube = screen.getByTestId('cube-stub')
+    const source = FakeEventSource.instances[0]
+    act(() => {
+      source.onopen?.()
+      source.emit('run.finished', {
+        id: 4,
+        type: 'run.finished',
+        run_id: 'run12345678',
+        episode_id: null,
+        ts: '2026-10-26T00:00:04+00:00',
+        data: { status: 'finished', totals: null },
+      })
+    })
+    expect(await screen.findByTestId('run-result')).toHaveTextContent(
+      '1 / 1',
+    )
+    await waitFor(() => expect(cube).toHaveAttribute('data-token', '2'))
   })
 })
 ```
@@ -6365,7 +6501,7 @@ export function ResultView({
 
 ```tsx
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '../api/client'
 import {
@@ -6521,14 +6657,41 @@ export default function RunPage() {
     state: CubeState | null
     token: number
   }>({ state: null, token: 0 })
+  const snapshotApplied = useRef(0)
 
+  // snapshot 的 current_state 优先；为空且已有 episode 时回退到该题 task.state（spec §4.3）。
+  // snapshotApplied 防止题集后到时重复吸附，把已经播出的批次拉回旧局面。
   useEffect(() => {
     if (live.snapshotToken === 0) return
+    if (snapshotApplied.current === live.snapshotToken) return
+    const taskState = benchmark.data?.tasks.find(
+      (item) => item.id === live.currentEpisode?.task_key,
+    )?.state
+    const target = live.snapshotState ?? taskState ?? null
+    if (!target) return
+    if (!live.snapshotState && live.latestBatch) return
+    snapshotApplied.current = live.snapshotToken
     setCubeReset((current) => ({
-      state: live.snapshotState,
+      state: target,
       token: current.token + 1,
     }))
-  }, [live.snapshotToken, live.snapshotState])
+  }, [
+    live.snapshotToken,
+    live.snapshotState,
+    live.latestBatch,
+    live.currentEpisode?.task_key,
+    benchmark.data,
+  ])
+
+  // 终态清空动画队列：run.finished / run.error 之后不再有批次（spec §6.3）。
+  useEffect(() => {
+    if (!finished) return
+    setCubeReset((current) => ({
+      state:
+        live.latestBatch?.state ?? live.snapshotState ?? current.state,
+      token: current.token + 1,
+    }))
+  }, [finished])
 
   useEffect(() => {
     if (!benchmark.data || live.episodeToken === 0) return
@@ -6661,7 +6824,7 @@ npm run typecheck
 npm run build
 ```
 
-Expected: 2 passed；类型检查与构建通过。
+Expected: 4 passed；类型检查与构建通过。
 
 - [ ] **Step 6: 提交**
 
