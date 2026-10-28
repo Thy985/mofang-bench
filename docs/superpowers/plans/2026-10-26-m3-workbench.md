@@ -5824,6 +5824,7 @@ git commit -m "feat: 实时事件 reducer 与 useRunEvents"
 - Create: `frontend/src/pages/RunPage.tsx`
 - Create: `frontend/src/pages/RunPage.test.tsx`
 - Modify: `frontend/src/App.tsx`
+- Modify: `frontend/src/App.test.tsx`
 
 **Interfaces:**
 - Consumes: `useRun`、`useProviders`、`useBenchmark`、`useReport`、`useRunEvents`、`api.runs.cancel`、`CubeView`、`LiveState`
@@ -6166,8 +6167,12 @@ describe('RunPage', () => {
         data: { status: 'finished', totals: null },
       })
     })
-    expect(await screen.findByTestId('run-result')).toHaveTextContent(
-      '1 / 1',
+    // ResultView 的加载态也带 run-result，findByTestId 会先命中“报告加载中…”；
+    // 这里要等报告数据替换掉加载态，断言文本本身不变。
+    await waitFor(() =>
+      expect(screen.getByTestId('run-result')).toHaveTextContent(
+        '1 / 1',
+      ),
     )
     await waitFor(() => expect(cube).toHaveAttribute('data-token', '2'))
   })
@@ -6811,6 +6816,15 @@ export default function RunPage() {
 import RunPage from './pages/RunPage'
 ...
         <Route path="runs/:id" element={<RunPage />} />
+```
+
+`frontend/src/App.test.tsx` 的导入区加一段 mock：路由表静态导入 `RunPage`，其模块链会加载 `three`；jsdom 用不到 WebGL，mock 掉 `CubeView` 可避免依赖的 CJS 弃用告警污染测试输出：
+
+```tsx
+// 路由表静态导入 RunPage → CubeView → three；jsdom 用不到 WebGL。
+vi.mock('./cube/CubeView', () => ({
+  CubeView: () => <div data-testid="cube-stub" />,
+}))
 ```
 
 - [ ] **Step 5: 运行测试与构建**
