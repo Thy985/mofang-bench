@@ -3831,9 +3831,9 @@ import { cubieSlots, stickerPlacement } from './facelets'
 
 describe('facelets', () => {
   it('maps 2x2 stickers to backend coordinates', () => {
-    expect(stickerPlacement('U', 0, 0, 2).position).toEqual([1, 1, 1])
-    expect(stickerPlacement('U', 1, 0, 2).position).toEqual([1, 1, -1])
-    expect(stickerPlacement('R', 0, 0, 2).position).toEqual([1, 1, -1])
+    expect(stickerPlacement('U', 0, 0, 2).position).toEqual([-1, 1, -1])
+    expect(stickerPlacement('U', 1, 0, 2).position).toEqual([-1, 1, 1])
+    expect(stickerPlacement('R', 0, 0, 2).position).toEqual([1, 1, 1])
     expect(stickerPlacement('F', 0, 0, 2).position).toEqual([-1, 1, 1])
   })
 
@@ -3975,6 +3975,8 @@ npm run test:run -- src/cube
 ```
 
 Expected: FAIL，模块不存在。
+
+坐标系约定（改前必读）：`coord(i,size)=2i-(size-1)`，`position = normal*(size-1) + right*coord(col) + up*coord(size-1-row)`，`FACE_FRAME` 与 `src/mofang/cube/geometry.py` 逐项一致。据此 2x2 的 U 面 row 0 是**靠后**一行（`up=(0,0,-1)`），所以 `U(0,0)` 落在 `[-1,1,-1]`、`U(1,0)` 落在 `[-1,1,1]`、`R(0,0)` 落在 `[1,1,1]`。这些值是从后端公式推出来的，不要凭直觉把 U 面的坐标“改正”成正 z；3x3 的六个值与 `F(0,0)=[-2,2,2]` 可互相校验。
 
 - [ ] **Step 3: 实现 facelets**
 
