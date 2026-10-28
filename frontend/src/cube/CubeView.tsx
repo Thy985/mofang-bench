@@ -148,7 +148,6 @@ function Scene(props: CubeViewProps) {
   // state 只在 resetToken 递增时吸附；实时 state 的更新不得打断动画。
   // 事件 id 在同一 run 内单调，换 run/换题会从 1 重来，所以吸附时清掉去重标记。
   useEffect(() => {
-    if (!props.state) return
     lastBatchId.current = null
     snapTo(props.state)
   }, [props.resetToken])
@@ -277,15 +276,17 @@ function Scene(props: CubeViewProps) {
 
 export function CubeView(props: CubeViewProps) {
   const size = props.state ? sizeOf(props.state.cube) : 2
+  // r3f 的 camera 只在 Canvas 挂载时生效，尺寸切换必须重建 Canvas。
   return (
     <div data-testid="cube-canvas" className="h-[420px] w-full">
       <Canvas
+        key={size}
         camera={{
           position: size === 2 ? [3.2, 3.2, 4.2] : [5, 5, 6.5],
           fov: 45,
         }}
       >
-        <Scene {...props} key={size} />
+        <Scene {...props} />
       </Canvas>
     </div>
   )

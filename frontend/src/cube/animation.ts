@@ -16,5 +16,7 @@ export function rotateOffset(
 }
 
 export function specAngle(spec: MoveSpec): number {
-  return (spec.turns * Math.PI) / 2
+  // turns 是落地方向的整数表示：3 等价于 -1 个 90°，动画走短弧。
+  const turns = spec.turns === 3 ? -1 : spec.turns
+  return (turns * Math.PI) / 2
 }

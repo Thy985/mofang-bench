@@ -49,4 +49,11 @@ describe('rotateOffset', () => {
       })
     }
   })
+
+  it('turns=3 走短弧且落点不变', () => {
+    const spec = parseMove('R', 3)
+    expect(spec.turns).toBe(3)
+    expect(specAngle(spec)).toBeCloseTo(-Math.PI / 2, 12)
+    expect(Math.abs(specAngle(spec))).toBeLessThanOrEqual(Math.PI)
+  })
 })
