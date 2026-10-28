@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { qk, useProviders } from '../api/queries'
 import { describeError } from '../lib/errors'
+import { readNumberInRange, readPositiveInt } from '../lib/validate'
 import type {
   ProbeResult,
   Provider,
@@ -43,18 +44,6 @@ export function ProvidersView({
     setForm((current) => ({ ...current, [key]: value }))
   }
 
-  // type="number" 会把无法解析的输入净化成空串，而 Number('') 是 0、
-  // Number('1.5') 不是整数，都会静默写进 params（后端 params: dict[str, Any] 不拦），
-  // 所以空串、非整数、小于 1 都必须在这里拦下。
-  function readPositiveInt(value: string, label: string): number | null {
-    const parsed = Number(value)
-    if (value.trim() === '' || !Number.isInteger(parsed) || parsed < 1) {
-      setFormError(`${label} 必须是正整数`)
-      return null
-    }
-    return parsed
-  }
-
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setFormError(null)
@@ -65,15 +54,13 @@ export function ProvidersView({
       setFormError('base_url 必须是 http(s)')
       return
     }
-    const maxTokens = readPositiveInt(form.max_tokens, 'max_tokens')
-    if (maxTokens === null) return
-    const temperature = Number(form.temperature)
-    if (
-      form.temperature.trim() === '' ||
-      !Number.isFinite(temperature) ||
-      temperature < 0 ||
-      temperature > 2
-    ) {
+    const maxTokens = readPositiveInt(form.max_tokens)
+    if (maxTokens === null) {
+      setFormError('max_tokens 必须是正整数')
+      return
+    }
+    const temperature = readNumberInRange(form.temperature, 0, 2)
+    if (temperature === null) {
       setFormError('temperature 必须是 0 到 2 之间的数值')
       return
     }

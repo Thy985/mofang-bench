@@ -97,6 +97,11 @@ async function submitDemoForm(
   return user
 }
 
+async function findFormAlert() {
+  const form = await screen.findByTestId('benchmark-form')
+  return within(form).findByRole('alert')
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -129,7 +134,7 @@ describe('BenchmarksView', () => {
         new ApiError(409, conflictDetail('demo-2x2-3')),
       )
     await submitDemoForm(onCreate)
-    const alert = await screen.findByRole('alert')
+    const alert = await findFormAlert()
     expect(alert).toHaveTextContent('已存在同 id 题集')
     expect(alert.textContent).not.toContain('benchmark already exists')
   })
@@ -157,7 +162,7 @@ describe('BenchmarksView', () => {
       .fn()
       .mockRejectedValueOnce(new ApiError(409, 'already there'))
     await submitDemoForm(onCreate)
-    const alert = await screen.findByRole('alert')
+    const alert = await findFormAlert()
     expect(alert).toHaveTextContent('已存在同 id 题集')
     expect(alert.textContent).not.toContain('already there')
     expect(
@@ -170,7 +175,7 @@ describe('BenchmarksView', () => {
       .fn()
       .mockRejectedValueOnce(new ApiError(400, 'depths must be positive'))
     await submitDemoForm(onCreate)
-    const alert = await screen.findByRole('alert')
+    const alert = await findFormAlert()
     expect(alert).toHaveTextContent('请求不合法（HTTP 400）')
     expect(alert).toHaveTextContent('depths must be positive')
   })
@@ -180,7 +185,7 @@ describe('BenchmarksView', () => {
       .fn()
       .mockRejectedValueOnce(new Error('benchmark already exists'))
     await submitDemoForm(onCreate)
-    const alert = await screen.findByRole('alert')
+    const alert = await findFormAlert()
     expect(alert).toHaveTextContent('网络错误：无法访问后端')
     expect(alert.textContent).not.toContain('benchmark already exists')
   })
@@ -228,7 +233,7 @@ describe('BenchmarksView', () => {
     renderView({ onCreate })
     await user.type(screen.getByLabelText('名称'), 'demo')
     await user.click(screen.getByRole('button', { name: '生成基准集' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    expect(await findFormAlert()).toHaveTextContent(
       '至少选择一个深度',
     )
     expect(onCreate).not.toHaveBeenCalled()
@@ -241,10 +246,20 @@ describe('BenchmarksView', () => {
     ['名称含斜杠', '名称', 'a/b', '名称不能包含 / # ?'],
     ['名称含井号', '名称', 'a#b', '名称不能包含 / # ?'],
     ['名称含问号', '名称', 'a?b', '名称不能包含 / # ?'],
-    ['每档题数清空', '每档题数', '', '每档题数必须是正整数'],
-    ['每档题数是非数字', '每档题数', 'abc', '每档题数必须是正整数'],
-    ['seed 清空', 'seed', '', 'seed 必须是整数'],
-    ['seed 是非数字', 'seed', 'abc', 'seed 必须是整数'],
+    ['每档题数为空', '每档题数', '', '每档题数必须是正整数'],
+    [
+      '每档题数输入字母（jsdom 净化为空）',
+      '每档题数',
+      'abc',
+      '每档题数必须是正整数',
+    ],
+    ['seed 为空', 'seed', '', 'seed 必须是整数'],
+    [
+      'seed 输入字母（jsdom 净化为空）',
+      'seed',
+      'abc',
+      'seed 必须是整数',
+    ],
   ])(
     'rejects %s before sending anything',
     async (_label, key, value, expected) => {
@@ -257,7 +272,7 @@ describe('BenchmarksView', () => {
       await user.clear(field)
       if (value !== '') await user.type(field, value)
       await user.click(screen.getByRole('button', { name: '生成基准集' }))
-      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+      expect(await findFormAlert()).toHaveTextContent(expected)
       expect(onCreate).not.toHaveBeenCalled()
     },
   )
@@ -476,7 +491,9 @@ describe('BenchmarkDetailPage', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    expect(await screen.findByText(/未找到该记录（HTTP 404）/)).toBeInTheDocument()
-    expect(screen.queryByText('benchmark not found')).not.toBeInTheDocument()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('未找到该记录（HTTP 404）')
+    // describeError 会把 detail 接在中文标签后；单独上屏才算把英文当错误文案
+    expect(alert).not.toHaveTextContent(/^benchmark not found$/)
   })
 })

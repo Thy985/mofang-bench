@@ -11,6 +11,7 @@ import type {
   CubeKind,
 } from '../api/types'
 import { shortId } from '../lib/format'
+import { readInteger, readPositiveInt } from '../lib/validate'
 
 const DEPTHS = [1, 2, 3, 5, 10, 20]
 
@@ -23,14 +24,6 @@ const initialForm = {
   depths: [] as number[],
   per_depth: '2',
   seed: '42',
-}
-
-// type=number 把无法解析的输入净化成空串，而 Number('') 是 0、Number('1.5') 不是整数，
-// 会静默生成 0 题或改掉 id 里的 seed，所以空值与非整数都要挡下来。
-function readInt(value: string): number | null {
-  const parsed = Number(value)
-  if (value.trim() === '' || !Number.isInteger(parsed)) return null
-  return parsed
 }
 
 // 409 的 detail 是 JSON 字符串 {"message":"benchmark already exists","id":"..."}：
@@ -67,6 +60,10 @@ export function BenchmarksView({
   const [conflictId, setConflictId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  function update(key: 'name' | 'per_depth' | 'seed', value: string) {
+    setForm((current) => ({ ...current, [key]: value }))
+  }
+
   function setCube(cube: CubeKind) {
     setForm((current) => ({
       ...current,
@@ -99,12 +96,12 @@ export function BenchmarksView({
       setFormError('至少选择一个深度')
       return
     }
-    const perDepth = readInt(form.per_depth)
-    if (perDepth === null || perDepth < 1) {
+    const perDepth = readPositiveInt(form.per_depth)
+    if (perDepth === null) {
       setFormError('每档题数必须是正整数')
       return
     }
-    const seed = readInt(form.seed)
+    const seed = readInteger(form.seed)
     if (seed === null) {
       setFormError('seed 必须是整数')
       return
@@ -156,9 +153,7 @@ export function BenchmarksView({
           <input
             className="rounded bg-slate-950 px-3 py-2"
             value={form.name}
-            onChange={(event) =>
-              setForm({ ...form, name: event.target.value })
-            }
+            onChange={(event) => update('name', event.target.value)}
             required
           />
         </label>
@@ -203,9 +198,7 @@ export function BenchmarksView({
             min={1}
             className="rounded bg-slate-950 px-3 py-2"
             value={form.per_depth}
-            onChange={(event) =>
-              setForm({ ...form, per_depth: event.target.value })
-            }
+            onChange={(event) => update('per_depth', event.target.value)}
           />
         </label>
         <label className="grid gap-1 text-sm">
@@ -214,9 +207,7 @@ export function BenchmarksView({
             type="number"
             className="rounded bg-slate-950 px-3 py-2"
             value={form.seed}
-            onChange={(event) =>
-              setForm({ ...form, seed: event.target.value })
-            }
+            onChange={(event) => update('seed', event.target.value)}
           />
         </label>
         <div className="flex flex-wrap items-center gap-3 md:col-span-2">
