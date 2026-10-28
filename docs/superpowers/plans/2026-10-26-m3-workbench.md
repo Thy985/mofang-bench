@@ -4832,7 +4832,7 @@ export function makeEpisode(overrides: Partial<Episode> = {}): Episode {
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import type { RunEvent } from '../api/types'
+import type { AggregateReport, CubeState, RunEvent } from '../api/types'
 import { makeEpisode, makeRun } from '../test/fixtures'
 import {
   initialLiveState,
@@ -5033,6 +5033,101 @@ describe('liveReducer', () => {
     })
     expect(state.progress).toEqual([{ moves: 0, length: 2 }])
     expect(state.episodeToken).toBe(1)
+  })
+
+  it('keeps live data on a reconnect snapshot', () => {
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 0,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'model.message',
+        {
+          content: 'kept',
+          tool_calls: 0,
+          usage: { prompt_tokens: 5, completion_tokens: 6 },
+        },
+        1,
+      ),
+    })
+    const token = state.snapshotToken
+    const snapshotState: CubeState = {
+      cube: '2x2',
+      faces: {
+        U: [['white', 'white'], ['white', 'white']],
+        R: [['red', 'red'], ['red', 'red']],
+        F: [['green', 'green'], ['green', 'green']],
+        D: [['yellow', 'yellow'], ['yellow', 'yellow']],
+        L: [['orange', 'orange'], ['orange', 'orange']],
+        B: [['blue', 'blue'], ['blue', 'blue']],
+      },
+    }
+    state = apply(state, {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [makeEpisode({ id: 'e2', task_key: 't2' })],
+      lastEventId: 1,
+      snapshotState,
+      reset: false,
+    })
+    expect(state.logs).toHaveLength(1)
+    expect(state.usage).toEqual({
+      prompt_tokens: 5,
+      completion_tokens: 6,
+    })
+    expect(state.snapshotToken).toBe(token + 1)
+    expect(state.snapshotState).toEqual(snapshotState)
+    expect(state.currentEpisode?.id).toBe('e2')
+  })
+
+  it('merges finish totals and marks run.error as failed', () => {
+    const totals: AggregateReport = {
+      benchmark_id: 'b1',
+      benchmark_hash: 'h1',
+      benchmark_total_tasks: 1,
+      partial: false,
+      totals: { tasks: 1, solved: 1, solve_rate: 1, ci95: [1, 1] },
+      by_bin: {},
+      episodes: [],
+    }
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 0,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('run.finished', { status: 'finished', totals }, 1, null),
+    })
+    expect(state.run?.status).toBe('finished')
+    expect(state.run?.totals?.totals.solve_rate).toBe(1)
+    expect(state.connection).toBe('closed')
+
+    state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 0,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('run.error', { message: 'boom' }, 1, null),
+    })
+    expect(state.run?.status).toBe('failed')
+    expect(state.run?.error).toBe('boom')
+    expect(state.error).toBe('boom')
+    expect(state.connection).toBe('closed')
   })
 })
 ```
@@ -5313,13 +5408,20 @@ export function liveReducer(
       return {
         ...next,
         run: state.run
-          ? { ...state.run, status: event.data.status }
+          ? {
+              ...state.run,
+              status: event.data.status,
+              totals: event.data.totals,
+            }
           : state.run,
         connection: 'closed',
       }
     case 'run.error':
       return {
         ...next,
+        run: state.run
+          ? { ...state.run, status: 'failed', error: event.data.message }
+          : state.run,
         error: event.data.message,
         connection: 'closed',
       }
@@ -5340,7 +5442,7 @@ cd frontend
 npm run test:run -- src/hooks/liveReducer.test.ts
 ```
 
-Expected: 4 passed。
+Expected: 6 passed。
 
 - [ ] **Step 5: 写 hook 测试**
 
@@ -5434,6 +5536,33 @@ describe('useRunEvents', () => {
       expect(result.current.connection).toBe('reconnecting'),
     )
   })
+
+  it('ignores a stale snapshot after the run changes', async () => {
+    let resolveStale!: (value: Snapshot) => void
+    const stale = new Promise<Snapshot>((resolve) => {
+      resolveStale = resolve
+    })
+    const fresh: Snapshot = {
+      run: makeRun({ id: 'r2' }),
+      episodes: [],
+      last_event_id: 0,
+      current_state: null,
+    }
+    vi.spyOn(api.runs, 'snapshot').mockImplementation((id) =>
+      id === 'r1' ? stale : Promise.resolve(fresh),
+    )
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useRunEvents(id),
+      { initialProps: { id: 'r1' } },
+    )
+    rerender({ id: 'r2' })
+    await waitFor(() => expect(result.current.run?.id).toBe('r2'))
+    await act(async () => {
+      resolveStale(snapshot)
+      await stale
+    })
+    expect(result.current.run?.id).toBe('r2')
+  })
 })
 ```
 
@@ -5469,7 +5598,6 @@ const EVENT_TYPES: RunEvent['type'][] = [
 export function useRunEvents(runId: string): LiveState {
   const [state, dispatch] = useReducer(liveReducer, undefined, initialLiveState)
   const sourceRef = useRef<EventSource | null>(null)
-  const aliveRef = useRef(true)
   const retryRef = useRef(0)
   const lastEventIdRef = useRef(0)
 
@@ -5478,7 +5606,8 @@ export function useRunEvents(runId: string): LiveState {
   }, [state.lastEventId])
 
   useEffect(() => {
-    aliveRef.current = true
+    // 每个 effect 实例独立的存活标记：runId 切换时旧 snapshot 的迟到响应必须作废。
+    let alive = true
     let timer: number | undefined
 
     async function connect(initial: boolean) {
@@ -5490,13 +5619,13 @@ export function useRunEvents(runId: string): LiveState {
       try {
         snapshot = await api.runs.snapshot(runId)
       } catch {
-        if (!aliveRef.current) return
+        if (!alive) return
         dispatch({ type: 'connection', connection: 'reconnecting' })
         const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
         timer = window.setTimeout(() => void connect(false), delay)
         return
       }
-      if (!aliveRef.current) return
+      if (!alive) return
       dispatch({
         type: 'snapshot',
         run: snapshot.run,
@@ -5518,6 +5647,7 @@ export function useRunEvents(runId: string): LiveState {
         ? snapshot.last_event_id
         : Math.max(snapshot.last_event_id, lastEventIdRef.current)
       const source = new EventSource(api.runs.eventsUrl(runId, after))
+      sourceRef.current?.close()
       sourceRef.current = source
       source.onopen = () => {
         retryRef.current = 0
@@ -5541,7 +5671,7 @@ export function useRunEvents(runId: string): LiveState {
       }
       source.onerror = () => {
         source.close()
-        if (!aliveRef.current) return
+        if (!alive) return
         dispatch({ type: 'connection', connection: 'reconnecting' })
         const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
         timer = window.setTimeout(() => void connect(false), delay)
@@ -5550,7 +5680,7 @@ export function useRunEvents(runId: string): LiveState {
 
     void connect(true)
     return () => {
-      aliveRef.current = false
+      alive = false
       if (timer !== undefined) window.clearTimeout(timer)
       sourceRef.current?.close()
     }
@@ -5572,7 +5702,7 @@ npm run test:run -- src/hooks
 npm run typecheck
 ```
 
-Expected: reducer 4 项 + hook 2 项通过；类型检查通过。
+Expected: reducer 6 项 + hook 3 项通过；类型检查通过。
 
 - [ ] **Step 8: 提交**
 

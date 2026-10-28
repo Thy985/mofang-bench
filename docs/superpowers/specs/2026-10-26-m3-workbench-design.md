@@ -89,8 +89,8 @@ scripts/
    - `tool.call` / `tool.result`：追加日志；失败结果标记首次非法调用。
    - `move.applied`：更新进度点，把 `moves` 与 `state` 入动画队列。
    - `episode.finished`：更新逐题状态与 run 进度。
-   - `run.finished`：关闭 SSE，invalidate run/report，切换到结果视图。
-   - `run.error`：显示错误横幅并关闭 SSE。
+   - `run.finished`：把 totals 并入 run，关闭 SSE，invalidate run/report，切换到结果视图。
+   - `run.error`：把 run 置为 failed 并记录错误信息，显示错误横幅并关闭 SSE。
 5. 事件按 `id` 去重；乱序或缺失以 snapshot 为准。
 
 ### 4.4 重连
