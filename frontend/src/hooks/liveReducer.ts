@@ -115,7 +115,9 @@ export function liveReducer(
       run: action.run,
       episodes: action.episodes,
       currentEpisode: current,
-      lastEventId: action.lastEventId,
+      lastEventId: action.reset
+        ? action.lastEventId
+        : Math.max(state.lastEventId, action.lastEventId),
       snapshotState: action.snapshotState,
       snapshotToken: state.snapshotToken + 1,
       error: action.run.error,

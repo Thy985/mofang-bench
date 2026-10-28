@@ -33,7 +33,11 @@ export function useRunEvents(runId: string): LiveState {
   useEffect(() => {
     // 每个 effect 实例独立的存活标记：runId 切换时旧 snapshot 的迟到响应必须作废。
     let alive = true
+    // reset 只取决于“本 run 是否已有一份 snapshot 落地”，与第几次连接无关。
+    let snapshotLanded = false
     let timer: number | undefined
+    lastEventIdRef.current = 0
+    retryRef.current = 0
 
     async function connect(initial: boolean) {
       dispatch({
@@ -57,8 +61,9 @@ export function useRunEvents(runId: string): LiveState {
         episodes: snapshot.episodes,
         lastEventId: snapshot.last_event_id,
         snapshotState: snapshot.current_state,
-        reset: initial,
+        reset: !snapshotLanded,
       })
+      snapshotLanded = true
       if (
         snapshot.run.status !== 'queued' &&
         snapshot.run.status !== 'running'
@@ -67,10 +72,10 @@ export function useRunEvents(runId: string): LiveState {
         return
       }
 
-      retryRef.current = 0
-      const after = initial
-        ? snapshot.last_event_id
-        : Math.max(snapshot.last_event_id, lastEventIdRef.current)
+      const after = Math.max(
+        snapshot.last_event_id,
+        lastEventIdRef.current,
+      )
       const source = new EventSource(api.runs.eventsUrl(runId, after))
       sourceRef.current?.close()
       sourceRef.current = source

@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import type { Snapshot } from '../api/types'
-import { makeRun } from '../test/fixtures'
+import { makeEpisode, makeRun } from '../test/fixtures'
 import { useRunEvents } from './useRunEvents'
 
 class FakeEventSource {
@@ -75,6 +75,7 @@ describe('useRunEvents', () => {
     await waitFor(() =>
       expect(result.current.run?.status).toBe('finished'),
     )
+    expect(source.closed).toBe(true)
     expect(result.current.connection).toBe('closed')
   })
 
@@ -114,5 +115,79 @@ describe('useRunEvents', () => {
       await stale
     })
     expect(result.current.run?.id).toBe('r2')
+  })
+
+  it('does not open a stream for a finished run', async () => {
+    vi.spyOn(api.runs, 'snapshot').mockResolvedValue({
+      ...snapshot,
+      run: makeRun({ status: 'finished' }),
+    })
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.connection).toBe('closed'))
+    expect(FakeEventSource.instances).toHaveLength(0)
+  })
+
+  it('retries a failed first snapshot with reset and its own cursor', async () => {
+    const snapshotSpy = vi
+      .spyOn(api.runs, 'snapshot')
+      .mockResolvedValue(snapshot)
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useRunEvents(id),
+      { initialProps: { id: 'r1' } },
+    )
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].emit('model.message', {
+        id: 4,
+        type: 'model.message',
+        run_id: 'r1',
+        episode_id: 'e1',
+        ts: '2026-10-26T00:00:04+00:00',
+        data: {
+          content: 'old log',
+          tool_calls: 0,
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        },
+      })
+    })
+    await waitFor(() => expect(result.current.logs).toHaveLength(1))
+
+    const retry: Snapshot = {
+      run: makeRun({ id: 'r2' }),
+      episodes: [makeEpisode({ id: 'e2', task_key: 't2' })],
+      last_event_id: 1,
+      current_state: null,
+    }
+    snapshotSpy.mockRejectedValueOnce(new Error('offline'))
+    snapshotSpy.mockResolvedValueOnce(retry)
+    rerender({ id: 'r2' })
+    await waitFor(() => expect(result.current.run?.id).toBe('r2'), {
+      timeout: 2500,
+    })
+    expect(result.current.logs).toHaveLength(0)
+    expect(result.current.progress).toEqual([{ moves: 0, length: 1 }])
+    expect(FakeEventSource.instances.at(-1)?.url).toBe(
+      '/api/runs/r2/events?after=1',
+    )
+  })
+
+  it('backs off stream failures exponentially', async () => {
+    const timeoutSpy = vi.spyOn(window, 'setTimeout')
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    act(() => {
+      FakeEventSource.instances[0].onerror?.()
+    })
+    await waitFor(
+      () => expect(FakeEventSource.instances).toHaveLength(2),
+      { timeout: 2500 },
+    )
+    act(() => {
+      FakeEventSource.instances[1].onerror?.()
+    })
+    const delays = timeoutSpy.mock.calls
+      .map((call) => call[1])
+      .filter((delay): delay is number => typeof delay === 'number')
+    expect(delays).toContain(2000)
   })
 })
