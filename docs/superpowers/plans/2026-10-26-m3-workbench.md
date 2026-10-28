@@ -7608,7 +7608,7 @@ if __name__ == "__main__":
 
 `build_completion` 的三个分支分别是：首次对话返回 `apply_moves` 工具调用；已有 tool 结果时返回 `solved` 文本；probe（无 `apply_moves` 工具）返回 `ok` 文本。
 
-E2E 用 2x2 / depth 1 / seed 3，`generate_scramble` 对它的产出是 `["R'"]`，mock 默认动作就是 `R'`，所以一回合即解出。生成器或种子若变化，E2E 会在结果断言处失败——这是有意的强约束，不要放宽成“跑完即可”。
+E2E 用 2x2 / depth 1 / seed 3，`generate_scramble` 对它的产出是 `["R'"]`，mock 默认动作就是 `R'`。`R'` 的阶为 4：初始打乱一次后再应用到第 3 次才回到单位元，所以这一题用 3 步解出、重放里有 3 个 `apply_moves` 步骤（实测确认）。生成器或种子若变化，E2E 会在结果/步数断言处失败——这是有意的强约束，不要放宽成“跑完即可”。
 
 - [ ] **Step 4: 运行 mock 测试**
 
@@ -7705,7 +7705,7 @@ test('provider → benchmark → live run → result → replay', async ({
 
   await page.goto('/benchmarks')
   await page.getByLabel('名称').fill('e2e')
-  await page.getByLabel('深度 1').check()
+  await page.getByLabel('深度 1', { exact: true }).check()
   await page.getByLabel('每档题数').fill('1')
   await page.getByLabel('seed').fill('3')
   await page.getByRole('button', { name: '生成基准集' }).click()
@@ -7734,9 +7734,10 @@ test('provider → benchmark → live run → result → replay', async ({
 
   await page.getByTestId('episode-replay-link').first().click()
   await expect(page.getByTestId('cube-canvas')).toBeVisible()
+  // scramble 是 R'，mock 固定回 R'：R' 的阶为 4，要 3 步才解出。
   await expect(
     page.getByTestId('step-row').filter({ hasText: 'apply_moves' }),
-  ).toHaveCount(1)
+  ).toHaveCount(3)
 })
 ```
 
@@ -7750,7 +7751,7 @@ npx playwright install chromium
 npm run e2e
 ```
 
-Expected: 1 passed。若 8000/5173/20129 被占用，先停止遗留进程；不要用 `reuseExistingServer: true` 掩盖端口冲突。若浏览器下载被网络阻断，报告 BLOCKED 并附原始错误，不要自行切换 `channel`。
+Expected: 1 passed。若 8000/5173/20129 被占用，先停止遗留进程；不要用 `reuseExistingServer: true` 掩盖端口冲突。若浏览器下载被网络阻断，报告 BLOCKED 并附原始错误，不要自行切换 `channel`；CDN 抖动时可先试 `NODE_OPTIONS=--dns-result-order=ipv4first PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=120000 npx playwright install chromium`（本次实测该方式成功）。
 
 - [ ] **Step 8: 提交**
 
