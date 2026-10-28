@@ -6052,6 +6052,11 @@ describe('ResultView', () => {
       'href',
       '/api/runs/run12345678/report',
     )
+    expect(screen.getByTestId('export-md')).toHaveAttribute(
+      'href',
+      '/api/runs/run12345678/export?format=md',
+    )
+    expect(screen.getByTestId('run-result')).toHaveTextContent('100.0%')
   })
 })
 
@@ -6153,6 +6158,9 @@ describe('RunPage', () => {
     )
     await waitFor(() =>
       expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    expect(FakeEventSource.instances[0].url).toBe(
+      '/api/runs/run12345678/events?after=3',
     )
     const cube = screen.getByTestId('cube-stub')
     const source = FakeEventSource.instances[0]
@@ -6340,16 +6348,24 @@ export function ResultView({
   run,
   provider,
   benchmark,
+  error = null,
 }: {
   report: Report | null
   run: Run
   provider: Provider | null
   benchmark: BenchmarkDetail | null
+  error?: string | null
 }) {
   if (!report) {
     return (
-      <section data-testid="run-result" className="text-sm text-slate-400">
-        报告加载中…
+      <section data-testid="run-result" className="text-sm">
+        {error ? (
+          <p role="alert" className="text-rose-300">
+            {error}
+          </p>
+        ) : (
+          <p className="text-slate-400">报告加载中…</p>
+        )}
       </section>
     )
   }
@@ -6529,6 +6545,7 @@ import { ToolLog } from '../components/ToolLog'
 import { CubeView } from '../cube/CubeView'
 import { useRunEvents } from '../hooks/useRunEvents'
 import type { LiveState } from '../hooks/liveReducer'
+import { describeError } from '../lib/errors'
 import {
   formatDuration,
   formatTokens,
@@ -6663,6 +6680,7 @@ export default function RunPage() {
     token: number
   }>({ state: null, token: 0 })
   const snapshotApplied = useRef(0)
+  const episodeApplied = useRef(0)
 
   // snapshot 的 current_state 优先；为空且已有 episode 时回退到该题 task.state（spec §4.3）。
   // snapshotApplied 防止题集后到时重复吸附，把已经播出的批次拉回旧局面。
@@ -6698,20 +6716,24 @@ export default function RunPage() {
     }))
   }, [finished])
 
+  // 切题时按题初始局面复位；episodeApplied 防题集后到重复吸附，
+  // latestBatch 存在时说明新题已经开播，不能再拉回起点。
   useEffect(() => {
-    if (!benchmark.data || live.episodeToken === 0) return
-    const task = benchmark.data.tasks.find(
+    if (live.episodeToken === 0) return
+    if (episodeApplied.current === live.episodeToken) return
+    const task = benchmark.data?.tasks.find(
       (item) => item.id === live.currentEpisode?.task_key,
     )
-    if (task) {
-      setCubeReset((current) => ({
-        state: task.state,
-        token: current.token + 1,
-      }))
-    }
+    if (!task || live.latestBatch) return
+    episodeApplied.current = live.episodeToken
+    setCubeReset((current) => ({
+      state: task.state,
+      token: current.token + 1,
+    }))
   }, [
     live.episodeToken,
     live.currentEpisode?.task_key,
+    live.latestBatch,
     benchmark.data,
   ])
 
@@ -6720,7 +6742,7 @@ export default function RunPage() {
     return <p className="text-sm text-slate-400">加载中…</p>
   }
   if (runQuery.error) {
-    return <p className="text-rose-300">{runQuery.error.message}</p>
+    return <p className="text-rose-300">{describeError(runQuery.error)}</p>
   }
   if (!run) {
     return <p className="text-sm text-slate-400">run 不存在。</p>
@@ -6741,6 +6763,11 @@ export default function RunPage() {
           返回历史
         </Link>
       </div>
+      {cancel.error && (
+        <p role="alert" className="text-rose-300">
+          {describeError(cancel.error)}
+        </p>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="space-y-3">
@@ -6803,6 +6830,7 @@ export default function RunPage() {
           run={run}
           provider={provider}
           benchmark={benchmark.data ?? null}
+          error={report.error ? describeError(report.error) : null}
         />
       )}
     </div>
