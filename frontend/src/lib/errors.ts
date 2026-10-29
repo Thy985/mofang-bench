@@ -30,3 +30,28 @@ export function describeError(err: unknown): string {
   const label = STATUS_LABELS[err.status] ?? '后端返回错误'
   return `${label}（HTTP ${err.status}）：${readableDetail(err.detail)}`
 }
+
+export function describeProbeError(err: unknown): {
+  kind: string | null
+  text: string
+} {
+  if (!(err instanceof ApiError)) {
+    return { kind: null, text: '网络错误：无法访问后端，请确认服务已启动' }
+  }
+  try {
+    const parsed: unknown = JSON.parse(err.detail)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const kind = (parsed as { kind?: unknown }).kind
+      if (typeof kind === 'string') {
+        const message = (parsed as { message?: unknown }).message
+        return {
+          kind,
+          text: typeof message === 'string' ? message : err.detail,
+        }
+      }
+    }
+  } catch {
+    // 非 JSON detail 走通用描述
+  }
+  return { kind: null, text: describeError(err) }
+}

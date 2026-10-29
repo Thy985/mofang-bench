@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../api/client'
 import { qk, useProviders } from '../api/queries'
-import { describeError } from '../lib/errors'
+import { describeError, describeProbeError } from '../lib/errors'
 import { readNumberInRange, readPositiveInt } from '../lib/validate'
 import type {
   ProbeResult,
@@ -49,7 +49,9 @@ export function ProvidersView({
   const [form, setForm] = useState(initialForm)
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [probes, setProbes] = useState<Record<string, string>>({})
+  const [probes, setProbes] = useState<
+    Record<string, { kind: string | null; text: string }>
+  >({})
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [keyErrors, setKeyErrors] = useState<Record<string, string>>({})
 
@@ -145,20 +147,20 @@ export function ProvidersView({
   }
 
   async function handleProbe(id: string) {
-    setProbes((current) => ({ ...current, [id]: '探测中…' }))
+    setProbes((current) => ({
+      ...current,
+      [id]: { kind: null, text: '探测中…' },
+    }))
     try {
       const result = await onProbe(id)
       setProbes((current) => ({
         ...current,
         [id]: result.tool_calling
-          ? '支持 tool calling'
-          : '不支持 tool calling',
+          ? { kind: null, text: '支持 tool calling' }
+          : { kind: null, text: '不支持 tool calling' },
       }))
     } catch (err) {
-      setProbes((current) => ({
-        ...current,
-        [id]: describeError(err),
-      }))
+      setProbes((current) => ({ ...current, [id]: describeProbeError(err) }))
     }
   }
 
@@ -306,7 +308,19 @@ export function ProvidersView({
                   探测
                 </Button>
                 {probes[provider.id] && (
-                  <span className="text-slate-300">{probes[provider.id]}</span>
+                  <span className="flex items-center gap-2 text-slate-300">
+                    {probes[provider.id].kind && (
+                      <span
+                        data-testid="probe-kind"
+                        className="rounded border border-warning px-1.5 py-0.5 text-xs text-amber-300"
+                      >
+                        {probes[provider.id].kind}
+                      </span>
+                    )}
+                    <span data-testid="probe-error">
+                      {probes[provider.id].text}
+                    </span>
+                  </span>
                 )}
               </div>
               <details className="text-sm">

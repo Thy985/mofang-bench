@@ -219,9 +219,14 @@ describe('ProvidersView', () => {
     )
     renderView({ providers: [provider], onProbe })
     await user.click(screen.getByRole('button', { name: '探测' }))
-    const text = await screen.findByText(/上游模型服务不可用/)
-    expect(text).toHaveTextContent('connection refused')
-    expect(text.textContent).not.toContain('{')
+    // 行为变更：502 dict detail 现在渲染 kind 徽标 + 原始 message，不再走通用“上游模型服务不可用”文案。
+    expect(await screen.findByTestId('probe-kind')).toHaveTextContent(
+      'connection',
+    )
+    expect(screen.getByTestId('probe-error')).toHaveTextContent(
+      'connection refused',
+    )
+    expect(screen.queryByText(/上游模型服务不可用/)).not.toBeInTheDocument()
   })
 
   it('shows a Chinese network error when the backend is unreachable', async () => {
@@ -250,5 +255,33 @@ describe('ProvidersView', () => {
     expect(
       screen.queryByText(/还没有 provider/),
     ).not.toBeInTheDocument()
+  })
+
+  it('shows the probe error kind as a badge next to the message', async () => {
+    const user = userEvent.setup()
+    const onProbe = vi.fn().mockRejectedValue(
+      new ApiError(
+        502,
+        JSON.stringify({ kind: 'connection', message: 'connection refused' }),
+      ),
+    )
+    render(
+      <ProvidersView
+        providers={[provider]}
+        loading={false}
+        error={null}
+        onCreate={vi.fn()}
+        onProbe={onProbe}
+        onSetKey={vi.fn().mockResolvedValue(undefined)}
+        onClearKey={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: '探测' }))
+    expect(await screen.findByTestId('probe-kind')).toHaveTextContent(
+      'connection',
+    )
+    expect(screen.getByTestId('probe-error')).toHaveTextContent(
+      'connection refused',
+    )
   })
 })
