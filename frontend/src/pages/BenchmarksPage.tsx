@@ -12,6 +12,11 @@ import type {
 } from '../api/types'
 import { shortId } from '../lib/format'
 import { readInteger, readPositiveInt } from '../lib/validate'
+import { Alert } from '../ui/Alert'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
+import { Skeleton } from '../ui/Skeleton'
+import { Spinner } from '../ui/Spinner'
 
 const DEPTHS = [1, 2, 3, 5, 10, 20]
 
@@ -135,23 +140,15 @@ export function BenchmarksView({
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Benchmarks</h1>
-      {error && (
-        <p
-          role="alert"
-          className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300"
-        >
-          {error}
-        </p>
-      )}
+      {error && <Alert tone="danger">{error}</Alert>}
       <form
         onSubmit={handleSubmit}
         data-testid="benchmark-form"
-        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
         <label className="grid gap-1 text-sm">
           <span>名称</span>
-          <input
-            className="rounded bg-slate-950 px-3 py-2"
+          <Input
             value={form.name}
             onChange={(event) => update('name', event.target.value)}
             required
@@ -160,7 +157,7 @@ export function BenchmarksView({
         <label className="grid gap-1 text-sm">
           <span>尺寸</span>
           <select
-            className="rounded bg-slate-950 px-3 py-2"
+            className="rounded bg-sunken px-3 py-2 text-sm"
             value={form.cube}
             onChange={(event) =>
               setCube(event.target.value as CubeKind)
@@ -193,37 +190,38 @@ export function BenchmarksView({
         </div>
         <label className="grid gap-1 text-sm">
           <span>每档题数</span>
-          <input
+          <Input
             type="number"
             min={1}
-            className="rounded bg-slate-950 px-3 py-2"
             value={form.per_depth}
             onChange={(event) => update('per_depth', event.target.value)}
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>seed</span>
-          <input
+          <Input
             type="number"
-            className="rounded bg-slate-950 px-3 py-2"
             value={form.seed}
             onChange={(event) => update('seed', event.target.value)}
           />
         </label>
         <div className="flex flex-wrap items-center gap-3 md:col-span-2">
-          <button
+          <Button
+            variant="primary"
             type="submit"
             disabled={submitting}
-            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
+            {submitting && (
+              <Spinner className="mr-2 border-slate-400 border-t-white" />
+            )}
             生成基准集
-          </button>
+          </Button>
           {formError && (
             <p role="alert" className="text-sm text-rose-300">
               {formError}
               {conflictId && (
                 <Link
-                  className="ml-2 text-emerald-400 underline"
+                  className="ml-2 text-accent underline"
                   to={`/benchmarks/${encodeURIComponent(conflictId)}`}
                 >
                   查看已有题集
@@ -235,26 +233,30 @@ export function BenchmarksView({
       </form>
 
       {loading ? (
-        <p className="text-sm text-slate-400">加载中…</p>
+        <div aria-busy="true" className="space-y-2">
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+        </div>
       ) : benchmarks.length === 0 ? (
         // 加载失败时只留错误横幅，不再叠一句“还没有基准集”的引导文案
-        error ? null : <p className="text-sm text-slate-400">还没有基准集。</p>
+        error ? null : <p className="text-sm text-text-dim">还没有基准集。</p>
       ) : (
         <ul className="space-y-2">
           {benchmarks.map((benchmark) => (
             <li
               key={benchmark.id}
-              className="flex flex-wrap items-center justify-between gap-3 rounded border border-slate-800 bg-slate-900 p-4 text-sm"
+              className="flex flex-wrap items-center justify-between gap-3 rounded border border-line bg-surface p-4 text-sm"
             >
               <div>
                 <div className="font-medium">{benchmark.name}</div>
-                <div className="text-slate-400">
+                <div className="text-text-dim">
                   {benchmark.id} · {benchmark.cube} ·{' '}
                   {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)}
                 </div>
               </div>
               <Link
-                className="text-emerald-400"
+                className="text-accent"
                 to={`/benchmarks/${encodeURIComponent(benchmark.id)}`}
               >
                 查看详情

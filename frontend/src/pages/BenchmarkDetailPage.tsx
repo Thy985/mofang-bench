@@ -2,6 +2,9 @@ import { Link, useParams } from 'react-router-dom'
 import { useBenchmark } from '../api/queries'
 import { describeError } from '../lib/errors'
 import type { BenchmarkDetail } from '../api/types'
+import { Alert } from '../ui/Alert'
+import { Skeleton } from '../ui/Skeleton'
+import { Table, Td, Th } from '../ui/Table'
 
 export function BenchmarkDetailView({
   benchmark,
@@ -11,44 +14,40 @@ export function BenchmarkDetailView({
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">{benchmark.name}</h1>
-      <p className="text-sm text-slate-400">
+      <p className="text-sm text-text-dim">
         {benchmark.id} · {benchmark.cube} · {benchmark.tasks.length} 题 ·
         hash {benchmark.content_hash}
       </p>
-      <table className="w-full border-collapse text-sm">
+      <Table>
         <thead>
-          <tr className="border-b border-slate-800 text-left text-slate-400">
-            <th className="py-2">task</th>
-            <th>scramble</th>
-            <th>depth</th>
-            <th>reference</th>
-            <th>kind</th>
-            <th>bin</th>
+          <tr>
+            <Th>task</Th>
+            <Th>scramble</Th>
+            <Th>depth</Th>
+            <Th>reference</Th>
+            <Th>kind</Th>
+            <Th>bin</Th>
           </tr>
         </thead>
         <tbody>
           {benchmark.tasks.map((task) => (
-            <tr
-              key={task.id}
-              data-testid="benchmark-task-row"
-              className="border-b border-slate-900"
-            >
-              <td className="py-2">{task.id}</td>
-              <td>{task.scramble.join(' ')}</td>
-              <td>{task.scramble_depth}</td>
-              <td>{task.reference_length}</td>
-              <td>{task.reference_kind}</td>
-              <td>{task.bin}</td>
+            <tr key={task.id} data-testid="benchmark-task-row">
+              <Td>{task.id}</Td>
+              <Td>{task.scramble.join(' ')}</Td>
+              <Td>{task.scramble_depth}</Td>
+              <Td>{task.reference_length}</Td>
+              <Td>{task.reference_kind}</Td>
+              <Td>{task.bin}</Td>
             </tr>
           ))}
         </tbody>
-      </table>
+      </Table>
       <div className="flex gap-4 text-sm">
-        <Link className="text-emerald-400" to="/benchmarks">
+        <Link className="text-accent" to="/benchmarks">
           返回列表
         </Link>
         <Link
-          className="text-emerald-400"
+          className="text-accent"
           to={`/runs/new?benchmark=${encodeURIComponent(benchmark.id)}`}
         >
           用此题集新建 run
@@ -61,13 +60,17 @@ export function BenchmarkDetailView({
 export default function BenchmarkDetailPage() {
   const { id } = useParams()
   const benchmark = useBenchmark(id)
-  if (benchmark.isPending) return <p>加载中…</p>
-  if (benchmark.error) {
+  if (benchmark.isPending) {
     return (
-      <p role="alert" className="text-rose-300">
-        {describeError(benchmark.error)}
-      </p>
+      <div aria-busy="true" className="space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
     )
+  }
+  if (benchmark.error) {
+    return <Alert tone="danger">{describeError(benchmark.error)}</Alert>
   }
   if (!benchmark.data) return null
   return <BenchmarkDetailView benchmark={benchmark.data} />
