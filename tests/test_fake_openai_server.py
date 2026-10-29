@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.fake_openai_server import build_completion  # noqa: E402
+from scripts.fake_openai_server import authorized, build_completion  # noqa: E402
 
 
 def test_build_completion_returns_tool_call_then_content() -> None:
@@ -32,6 +32,13 @@ def test_build_completion_returns_tool_call_then_content() -> None:
         ["R'"],
     )
     assert second["choices"][0]["message"]["content"] == "solved"
+
+
+def test_authorized_checks_bearer_token_when_configured() -> None:
+    assert authorized(None, None) is True
+    assert authorized("Bearer test", "test") is True
+    assert authorized(None, "test") is False
+    assert authorized("Bearer wrong", "test") is False
 
 
 def test_build_completion_handles_probe() -> None:

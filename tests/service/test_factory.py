@@ -29,6 +29,36 @@ def test_build_adapter_requires_env_key(tmp_path: Path) -> None:
         build_adapter(record, env={})
 
 
+def test_build_adapter_prefers_stored_key_over_env(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    record = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="sk-stored",
+    )
+    adapter = build_adapter(record, env={"KEY": "sk-env"})
+    assert adapter.api_key == "sk-stored"
+
+
+def test_build_adapter_falls_back_to_env(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    record = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key=None,
+    )
+    adapter = build_adapter(record, env={"KEY": "sk-env"})
+    assert adapter.api_key == "sk-env"
+
+
 def test_build_adapter_uses_key_and_params(tmp_path: Path) -> None:
     db = Database(tmp_path / "t.db")
     db.initialize()

@@ -15,7 +15,7 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'uv run python scripts/fake_openai_server.py --port 20129',
+        'uv run python scripts/fake_openai_server.py --port 20129 --api-key test',
       cwd: '..',
       url: 'http://127.0.0.1:20129/health',
       reuseExistingServer: false,
@@ -27,9 +27,10 @@ export default defineConfig({
       url: 'http://127.0.0.1:8000/api/benchmarks',
       reuseExistingServer: false,
       timeout: 120_000,
+      // 显式清空环境变量 key：E2E 必须走 Web 里保存的 key。
       env: {
         ...process.env,
-        OPENAI_API_KEY: 'test',
+        OPENAI_API_KEY: '',
       },
     },
     {

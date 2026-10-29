@@ -25,6 +25,7 @@ const provider: Provider = {
   api_key_ref: 'KEY',
   params: {},
   key_configured: true,
+  key_stored: false,
   created_at: '2026-10-26T00:00:00+00:00',
 }
 

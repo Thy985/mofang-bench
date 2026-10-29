@@ -22,6 +22,7 @@ class ProviderRecord:
     api_key_ref: str
     params_json: str
     created_at: str
+    api_key: str | None = None
 
     @property
     def params(self) -> dict[str, Any]:
@@ -37,6 +38,7 @@ def _row_to_record(row: Any) -> ProviderRecord:
         api_key_ref=row["api_key_ref"],
         params_json=row["params_json"],
         created_at=row["created_at"],
+        api_key=row["api_key"],
     )
 
 
@@ -47,6 +49,7 @@ def create_provider(
     base_url: str,
     model: str,
     api_key_ref: str,
+    api_key: str | None = None,
     params: dict[str, Any] | None = None,
 ) -> ProviderRecord:
     record = ProviderRecord(
@@ -57,21 +60,41 @@ def create_provider(
         api_key_ref=api_key_ref,
         params_json=json.dumps(params or {}, ensure_ascii=False),
         created_at=now(),
+        api_key=api_key,
     )
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO providers VALUES (?,?,?,?,?,?,?)",
+            """
+            INSERT INTO providers
+              (id, name, base_url, model, api_key_ref, api_key,
+               params_json, created_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            """,
             (
                 record.id,
                 record.name,
                 record.base_url,
                 record.model,
                 record.api_key_ref,
+                record.api_key,
                 record.params_json,
                 record.created_at,
             ),
         )
     return record
+
+
+def set_provider_key(
+    db: Database, provider_id: str, api_key: str | None
+) -> ProviderRecord | None:
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "UPDATE providers SET api_key = ? WHERE id = ?",
+            (api_key, provider_id),
+        )
+    if cursor.rowcount == 0:
+        return None
+    return get_provider(db, provider_id)
 
 
 def list_providers(db: Database) -> list[ProviderRecord]:

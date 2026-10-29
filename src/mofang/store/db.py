@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS providers (
   base_url TEXT NOT NULL,
   model TEXT NOT NULL,
   api_key_ref TEXT NOT NULL,
+  api_key TEXT,
   params_json TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -124,6 +125,12 @@ class Database:
         conn = self.connect()
         try:
             conn.executescript(SCHEMA)
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(providers)")
+            }
+            if "api_key" not in columns:
+                conn.execute("ALTER TABLE providers ADD COLUMN api_key TEXT")
             conn.commit()
         finally:
             conn.close()

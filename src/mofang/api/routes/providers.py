@@ -11,16 +11,17 @@ from ...store.providers import (
     create_provider,
     get_provider,
     list_providers,
+    set_provider_key,
 )
-from ..schemas import ProviderCreate, ProviderOut
+from ..schemas import ProviderCreate, ProviderKeyUpdate, ProviderOut
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
 
-def _configured(request: Request, ref: str) -> bool:
+def _configured(request: Request, record: ProviderRecord) -> bool:
     env = request.app.state.env
     values = os.environ if env is None else env
-    return bool(values.get(ref))
+    return bool(record.api_key) or bool(values.get(record.api_key_ref))
 
 
 def _out(request: Request, record: ProviderRecord) -> ProviderOut:
@@ -31,7 +32,8 @@ def _out(request: Request, record: ProviderRecord) -> ProviderOut:
         model=record.model,
         api_key_ref=record.api_key_ref,
         params=record.params,
-        key_configured=_configured(request, record.api_key_ref),
+        key_configured=_configured(request, record),
+        key_stored=bool(record.api_key),
         created_at=record.created_at,
     )
 
@@ -40,12 +42,17 @@ def _out(request: Request, record: ProviderRecord) -> ProviderOut:
 def create(payload: ProviderCreate, request: Request) -> ProviderOut:
     if not payload.base_url.startswith(("http://", "https://")):
         raise HTTPException(400, "base_url must be http(s)")
+    ref = payload.api_key_ref.strip()
+    key = payload.api_key or None
+    if not ref and not key:
+        raise HTTPException(400, "api_key or api_key_ref is required")
     record = create_provider(
         request.app.state.db,
         name=payload.name,
         base_url=payload.base_url,
         model=payload.model,
-        api_key_ref=payload.api_key_ref,
+        api_key_ref=ref,
+        api_key=key,
         params=payload.params,
     )
     return _out(request, record)
@@ -57,6 +64,26 @@ def list_all(request: Request) -> list[ProviderOut]:
         _out(request, record)
         for record in list_providers(request.app.state.db)
     ]
+
+
+@router.put("/{provider_id}/key", response_model=ProviderOut)
+def put_key(
+    provider_id: str, payload: ProviderKeyUpdate, request: Request
+) -> ProviderOut:
+    record = set_provider_key(
+        request.app.state.db, provider_id, payload.api_key
+    )
+    if record is None:
+        raise HTTPException(404, "provider not found")
+    return _out(request, record)
+
+
+@router.delete("/{provider_id}/key", response_model=ProviderOut)
+def delete_key(provider_id: str, request: Request) -> ProviderOut:
+    record = set_provider_key(request.app.state.db, provider_id, None)
+    if record is None:
+        raise HTTPException(404, "provider not found")
+    return _out(request, record)
 
 
 @router.post("/{provider_id}/probe")

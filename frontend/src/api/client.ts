@@ -67,6 +67,15 @@ export const api = {
         `/providers/${encodeURIComponent(id)}/probe`,
         { method: 'POST' },
       ),
+    setKey: (id: string, apiKey: string) =>
+      request<Provider>(`/providers/${encodeURIComponent(id)}/key`, {
+        method: 'PUT',
+        body: JSON.stringify({ api_key: apiKey }),
+      }),
+    clearKey: (id: string) =>
+      request<Provider>(`/providers/${encodeURIComponent(id)}/key`, {
+        method: 'DELETE',
+      }),
   },
   benchmarks: {
     list: () => request<BenchmarkSummary[]>('/benchmarks'),

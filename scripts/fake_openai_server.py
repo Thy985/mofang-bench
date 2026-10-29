@@ -6,6 +6,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
+def authorized(header: str | None, expected: str | None) -> bool:
+    if expected is None:
+        return True
+    return header == f"Bearer {expected}"
+
+
 def build_completion(
     payload: dict[str, Any], moves: list[str]
 ) -> dict[str, Any]:
@@ -59,6 +65,7 @@ def build_completion(
 
 class Handler(BaseHTTPRequestHandler):
     moves: list[str] = ["R'"]
+    api_key: str | None = None
 
     def do_GET(self) -> None:
         if self.path == "/health":
@@ -70,13 +77,18 @@ class Handler(BaseHTTPRequestHandler):
         if not self.path.endswith("/chat/completions"):
             self.send_error(404)
             return
+        if not authorized(self.headers.get("Authorization"), self.api_key):
+            self._json(
+                {"error": {"message": "invalid api key"}}, status=401
+            )
+            return
         length = int(self.headers.get("Content-Length", "0"))
         payload = json.loads(self.rfile.read(length) or b"{}")
         self._json(build_completion(payload, self.moves))
 
-    def _json(self, body: dict[str, Any]) -> None:
+    def _json(self, body: dict[str, Any], status: int = 200) -> None:
         raw = json.dumps(body).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -90,9 +102,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=20129)
     parser.add_argument("--move", action="append", dest="moves")
+    parser.add_argument("--api-key", default=None)
     args = parser.parse_args()
     if args.moves:
         Handler.moves = args.moves
+    Handler.api_key = args.api_key
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"fake openai listening on {args.port}", flush=True)
     server.serve_forever()

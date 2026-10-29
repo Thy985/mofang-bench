@@ -33,6 +33,7 @@ export interface Provider {
   api_key_ref: string
   params: ProviderParams
   key_configured: boolean
+  key_stored: boolean
   created_at: string
 }
 
@@ -41,6 +42,7 @@ export interface ProviderCreate {
   base_url: string
   model: string
   api_key_ref: string
+  api_key?: string
   params: ProviderParams
 }
 

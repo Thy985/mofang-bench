@@ -10,10 +10,13 @@ test('provider → benchmark → live run → result → replay', async ({
     .getByLabel('base_url')
     .fill('http://127.0.0.1:20129/v1')
   await page
-    .getByLabel('API key 环境变量')
-    .fill('OPENAI_API_KEY')
+    .getByLabel('API key（可选，保存后不回显）')
+    .fill('test')
   await page.getByRole('button', { name: '保存 provider' }).click()
   await expect(page.getByTestId('provider-card')).toContainText('mock')
+  await expect(page.getByTestId('key-configured')).toContainText(
+    'key 已保存',
+  )
   await page.getByRole('button', { name: '探测' }).click()
   await expect(page.getByText('支持 tool calling')).toBeVisible()
 

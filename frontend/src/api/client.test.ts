@@ -155,6 +155,21 @@ describe('api client', () => {
     )
     await api.providers.probe('p1')
     expect(fetchMock.mock.calls[1][0]).toBe('/api/providers/p1/probe')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'p1' }))
+    await api.providers.setKey('p1', 'sk-new')
+    const [setUrl, setInit] = fetchMock.mock.calls[2]
+    expect(setUrl).toBe('/api/providers/p1/key')
+    expect(setInit.method).toBe('PUT')
+    expect(JSON.parse(setInit.body as string)).toEqual({
+      api_key: 'sk-new',
+    })
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ id: 'p1' }))
+    await api.providers.clearKey('p1')
+    const [clearUrl, clearInit] = fetchMock.mock.calls[3]
+    expect(clearUrl).toBe('/api/providers/p1/key')
+    expect(clearInit.method).toBe('DELETE')
   })
 
   // benchmark 的 id 是 f"{name}-{cube}-{seed}"，name 只约束 min_length=1；
@@ -170,6 +185,8 @@ describe('api client', () => {
     await api.runs.cancel(id)
     await api.runs.report(id)
     await api.providers.probe(id)
+    await api.providers.setKey(id, 'k')
+    await api.providers.clearKey(id)
     await api.episodes.get(id)
     await api.episodes.steps(id)
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
@@ -179,6 +196,8 @@ describe('api client', () => {
       `/api/runs/${encoded}/cancel`,
       `/api/runs/${encoded}/report`,
       `/api/providers/${encoded}/probe`,
+      `/api/providers/${encoded}/key`,
+      `/api/providers/${encoded}/key`,
       `/api/episodes/${encoded}`,
       `/api/episodes/${encoded}/steps`,
     ])

@@ -38,10 +38,11 @@ def build_adapter(
     env: Mapping[str, str] | None = None,
 ) -> OpenAICompatibleAdapter:
     values = os.environ if env is None else env
-    key = values.get(record.api_key_ref, "")
+    key = record.api_key or values.get(record.api_key_ref, "")
     if not key:
         raise ProviderConfigError(
-            f"environment variable {record.api_key_ref} is not set"
+            "no API key configured: save one on the provider "
+            "or set its environment variable"
         )
     return OpenAICompatibleAdapter(
         base_url=record.base_url,

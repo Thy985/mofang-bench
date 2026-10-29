@@ -14,7 +14,8 @@ const initialForm = {
   name: '',
   base_url: 'http://localhost:20128/v1',
   model: '',
-  api_key_ref: 'OPENAI_API_KEY',
+  api_key: '',
+  api_key_ref: '',
   temperature: '0',
   max_tokens: '4096',
   extra: '{}',
@@ -26,6 +27,8 @@ export interface ProvidersViewProps {
   error: string | null
   onCreate: (payload: ProviderCreate) => Promise<void>
   onProbe: (id: string) => Promise<ProbeResult>
+  onSetKey: (id: string, apiKey: string) => Promise<void>
+  onClearKey: (id: string) => Promise<void>
 }
 
 export function ProvidersView({
@@ -34,11 +37,15 @@ export function ProvidersView({
   error,
   onCreate,
   onProbe,
+  onSetKey,
+  onClearKey,
 }: ProvidersViewProps) {
   const [form, setForm] = useState(initialForm)
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [probes, setProbes] = useState<Record<string, string>>({})
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
+  const [keyErrors, setKeyErrors] = useState<Record<string, string>>({})
 
   function update(key: keyof typeof initialForm, value: string) {
     setForm((current) => ({ ...current, [key]: value }))
@@ -76,13 +83,20 @@ export function ProvidersView({
       setFormError('extra 必须是合法 JSON')
       return
     }
+    const apiKey = form.api_key.trim()
+    const apiKeyRef = form.api_key_ref.trim()
+    if (!apiKey && !apiKeyRef) {
+      setFormError('API key 与环境变量名至少填一个')
+      return
+    }
     setSubmitting(true)
     try {
       await onCreate({
         name: form.name,
         base_url: form.base_url,
         model: form.model,
-        api_key_ref: form.api_key_ref,
+        api_key_ref: apiKeyRef,
+        ...(apiKey ? { api_key: apiKey } : {}),
         params: {
           temperature,
           max_tokens: maxTokens,
@@ -94,6 +108,33 @@ export function ProvidersView({
       setFormError(describeError(err))
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleSetKey(id: string) {
+    const draft = (keyDrafts[id] ?? '').trim()
+    if (!draft) {
+      setKeyErrors((current) => ({
+        ...current,
+        [id]: '请先填写新的 API key',
+      }))
+      return
+    }
+    try {
+      await onSetKey(id, draft)
+      setKeyDrafts((current) => ({ ...current, [id]: '' }))
+      setKeyErrors((current) => ({ ...current, [id]: '' }))
+    } catch (err) {
+      setKeyErrors((current) => ({ ...current, [id]: describeError(err) }))
+    }
+  }
+
+  async function handleClearKey(id: string) {
+    try {
+      await onClearKey(id)
+      setKeyErrors((current) => ({ ...current, [id]: '' }))
+    } catch (err) {
+      setKeyErrors((current) => ({ ...current, [id]: describeError(err) }))
     }
   }
 
@@ -158,6 +199,16 @@ export function ProvidersView({
           />
         </label>
         <label className="grid gap-1 text-sm">
+          <span>API key（可选，保存后不回显）</span>
+          <input
+            type="password"
+            autoComplete="off"
+            className="rounded bg-slate-950 px-3 py-2"
+            value={form.api_key}
+            onChange={(event) => update('api_key', event.target.value)}
+          />
+        </label>
+        <label className="grid gap-1 text-sm">
           <span>API key 环境变量</span>
           <input
             className="rounded bg-slate-950 px-3 py-2"
@@ -165,7 +216,7 @@ export function ProvidersView({
             onChange={(event) =>
               update('api_key_ref', event.target.value)
             }
-            required
+            placeholder="可选，例如 OPENAI_API_KEY"
           />
         </label>
         <label className="grid gap-1 text-sm">
@@ -222,7 +273,7 @@ export function ProvidersView({
         // 加载失败时只留错误横幅，不再叠一句“还没有 provider”的引导文案
         error ? null : (
           <p className="text-sm text-slate-400">
-            还没有 provider。填写上方表单，环境变量名在启动服务前 export。
+            还没有 provider。可在上方直接保存 API key，或用环境变量名回退。
           </p>
         )
       ) : (
@@ -238,9 +289,9 @@ export function ProvidersView({
                 {provider.model} · {provider.base_url}
               </div>
               <div className="text-slate-500">
-                环境变量：{provider.api_key_ref}
+                环境变量：{provider.api_key_ref || '—'}
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span
                   data-testid="key-configured"
                   className={
@@ -249,7 +300,11 @@ export function ProvidersView({
                       : 'text-amber-400'
                   }
                 >
-                  {provider.key_configured ? 'key 已配置' : 'key 未配置'}
+                  {provider.key_stored
+                    ? 'key 已保存（不回显）'
+                    : provider.key_configured
+                      ? 'key 来自环境变量'
+                      : 'key 未配置'}
                 </span>
                 <button
                   type="button"
@@ -262,6 +317,47 @@ export function ProvidersView({
                   <span className="text-slate-300">{probes[provider.id]}</span>
                 )}
               </div>
+              <details className="text-sm">
+                <summary className="cursor-pointer text-slate-400">
+                  设置/更换 key
+                </summary>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    aria-label={`新 API key（${provider.name}）`}
+                    className="rounded bg-slate-950 px-2 py-1"
+                    value={keyDrafts[provider.id] ?? ''}
+                    onChange={(event) =>
+                      setKeyDrafts((current) => ({
+                        ...current,
+                        [provider.id]: event.target.value,
+                      }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleSetKey(provider.id)}
+                    className="rounded border border-slate-700 px-3 py-1"
+                  >
+                    保存 key
+                  </button>
+                  {provider.key_stored && (
+                    <button
+                      type="button"
+                      onClick={() => void handleClearKey(provider.id)}
+                      className="rounded border border-rose-700 px-3 py-1 text-rose-300"
+                    >
+                      清除 key
+                    </button>
+                  )}
+                </div>
+                {keyErrors[provider.id] && (
+                  <p role="alert" className="mt-1 text-xs text-rose-300">
+                    {keyErrors[provider.id]}
+                  </p>
+                )}
+              </details>
             </li>
           ))}
         </ul>
@@ -279,6 +375,17 @@ export default function ProvidersPage() {
       queryClient.invalidateQueries({ queryKey: qk.providers }),
   })
   const probe = useMutation({ mutationFn: api.providers.probe })
+  const setKey = useMutation({
+    mutationFn: ({ id, key }: { id: string; key: string }) =>
+      api.providers.setKey(id, key),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.providers }),
+  })
+  const clearKey = useMutation({
+    mutationFn: api.providers.clearKey,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: qk.providers }),
+  })
 
   return (
     <ProvidersView
@@ -289,6 +396,12 @@ export default function ProvidersPage() {
         await create.mutateAsync(payload)
       }}
       onProbe={async (id) => probe.mutateAsync(id)}
+      onSetKey={async (id, key) => {
+        await setKey.mutateAsync({ id, key })
+      }}
+      onClearKey={async (id) => {
+        await clearKey.mutateAsync(id)
+      }}
     />
   )
 }
