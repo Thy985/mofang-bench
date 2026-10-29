@@ -1,16 +1,25 @@
 # mofang Web 工作台
 
 mofang 的 M3 前端：用 React + Vite 展示 Provider、题集、实时 3D 运行与
-Episode 回放，数据来自本地 FastAPI（`uv run mofang serve`）。
+Episode 回放，数据来自本地 FastAPI。
 
 ## 开发
+
+日常开发建议在仓库根用一条命令同时启动 API 与 Vite：
+
+```bash
+uv run mofang dev
+```
+
+也可以在本目录单独启动前端（API 需在 8000 运行）：
 
 ```bash
 npm install
 npm run dev
 ```
 
-Vite 在 `http://127.0.0.1:5173` 启动，`/api` 代理到 `http://127.0.0.1:8000`。
+Vite 在 `http://127.0.0.1:5173` 启动，`/api` 代理到 `http://127.0.0.1:8000`
+（可用 `MOFANG_API_PORT` 覆盖）。
 
 ## 构建与验证
 

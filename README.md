@@ -88,22 +88,20 @@ curl -N http://127.0.0.1:8000/api/runs/<id>/events
 
 ## 前端工作台
 
-开发期两个进程：
+一条命令启动开发环境（API + Vite）：
 
 ```bash
-# 终端 1
-export OPENAI_API_KEY=...
-uv run mofang serve
-
-# 终端 2
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install   # 首次
+cd ..
+uv run mofang dev
 ```
 
-打开 `http://127.0.0.1:5173`。流程：Providers 新建 provider（填环境变量名）→
-Probe → Benchmarks 生成题集 → New Run → 实时 3D → 结果与导出 →
-Episode 回放。
+打开 `http://127.0.0.1:5173`。`--open` 自动开浏览器；`--port` / `--ui-port`
+可改端口。流程：Providers 新建 provider（API key 可直接保存在本机，或用
+环境变量名回退）→ Probe → Benchmarks 生成题集 → New Run → 实时 3D →
+结果与导出 → Episode 回放。
+
+`mofang dev` 同时管理 API 与 Vite，Ctrl+C 会一并停止，不遗留后端进程。
 
 单端口演示：
 
@@ -121,11 +119,11 @@ uv run mofang serve
 
 ```bash
 uv run python scripts/fake_openai_server.py --port 20129
-export OPENAI_API_KEY=test
-uv run mofang serve
+uv run mofang dev
 ```
 
-Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
+Provider 填 `http://127.0.0.1:20129/v1`，API key 任填（mock 默认不校验；若给
+mock 加 `--api-key test`，则必须填 `test`）。生成 2x2、depth 1、seed 3 题集
 （scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第三次应用后工具结果
 判定解出（`R'` 的阶为 4）。
 

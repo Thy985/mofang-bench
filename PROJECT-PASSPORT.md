@@ -69,6 +69,8 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 
 - `data/cache/`：求解器距离表缓存（gitignored）。
 - `twophase/`：RubikTwoPhase 首次运行生成的求解表（约 80MB，gitignored）；库按相对路径 `twophase/` 查找，因此命令需在项目根执行。
+- `data/mofang.db`：本地 SQLite；`providers.api_key` 为 Web 中保存的明文 key
+  （gitignored，仅本机账户可读）。
 - `data/benchmarks/`：冻结基准题 JSON。
 - `data/reports/`：运行报告 JSON（gitignored）。
 - `data/e2e-<timestamp>.db`：Playwright E2E 临时 DB（gitignored）。
@@ -79,7 +81,9 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 
 - Plan 1：CLI，无服务端口。
 - M2：FastAPI `127.0.0.1:8000`（`uv run mofang serve`）；DB 默认 `data/mofang.db`。
-- M3 开发：Vite `127.0.0.1:5173`（CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`）。
+- M3 开发：`uv run mofang dev` 一条命令拉起 API（`127.0.0.1:8000`）与 Vite
+  （`127.0.0.1:5173`），Ctrl+C 一并收口；`--port` / `--ui-port` 可改端口。
+  CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`（Vite 代理 `/api`）。
 - M3 单端口演示：先 `npm run build`，再由 FastAPI `127.0.0.1:8000` 托管 `frontend/dist`；
   `--web-dir ""` 可关闭托管，只留 API；`MOFANG_WEB_DIR` 仅对 `Settings.from_env()`
   生效，`mofang serve` 不使用它。
@@ -87,7 +91,7 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 
 ## 模型接入
 
-- 本地 9router：`http://localhost:20128/v1`（需手动启动；API key 必需，只从环境变量读取，不入库）。
+- 本地 9router：`http://localhost:20128/v1`（需手动启动）。API key 可在 Web 的 provider 表单中保存到本地 SQLite（明文，`data/mofang.db`，gitignored），或用 `api_key_ref` 指向环境变量；API 响应、导出与日志不回显 key。
 - 已验证可用：`my-combo`（路由到 agnes-3.0-flash）、`ollama/gpt-oss:120b`、`sensenova/glm-5.2`。
 - 网关兼容性：普通 JSON 可能附加 `data: [DONE]`；部分后端必须显式 `stream:false`（adapter 已固定发送，`probe_tools` 亦然——否则网关返回 SSE 分片导致 probe 报 `bad_response`）；`sensenova/kimi-k3` 只接受 temperature=1；`agnes1/agnes-2.5-pro` 需实名认证。
 - 真实冒烟（2026-10-26，`ollama/gpt-oss:120b`，2x2 depth 1）：CLI 链路与工具调用正常，模型未解出（0/1，10 步预算耗尽）。报告在 `data/reports/real-smoke-gptoss.json`（gitignored）。
@@ -108,3 +112,5 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - 多模态、3x3 精确最优、多 trial / pass@k 尚未实现。
 - M4 对比页（`/api/compare` 已有后端端点）尚未实现前端。
 - 同一 run 内 episode 串行；跨 run 由 `RunService` 的锁串行，长跑会排队。
+- 保存的 API key 为本地 SQLite 明文；拿到 `data/mofang.db` 即可读取，靠文件系统与账户权限保护。
+- `mofang dev` 首版不重启后端热重载：改 Python 代码需重启命令；Vite 前端保留 HMR。

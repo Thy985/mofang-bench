@@ -162,6 +162,16 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--db", default="data/mofang.db")
     serve.add_argument("--table", default="data/cache/2x2_distances.pkl")
     serve.add_argument("--web-dir", default="frontend/dist")
+
+    dev = sub.add_parser(
+        "dev", help="run API and Vite dev server together"
+    )
+    dev.add_argument("--host", default="127.0.0.1")
+    dev.add_argument("--port", type=int, default=8000)
+    dev.add_argument("--ui-port", type=int, default=5173)
+    dev.add_argument("--db", default="data/mofang.db")
+    dev.add_argument("--table", default="data/cache/2x2_distances.pkl")
+    dev.add_argument("--open", action="store_true")
     return parser
 
 
@@ -232,6 +242,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "serve":
         return _serve(args)
+    if args.command == "dev":
+        from .dev import run_dev
+
+        return run_dev(args)
     parser.error("unknown command")
     return 2
 

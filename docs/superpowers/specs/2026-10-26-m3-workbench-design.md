@@ -188,8 +188,9 @@ FACE_FRAME = {
 
 ### 7.2 Providers
 
-- 列表：name、model、base_url、`key_configured`、created_at。
-- 新建：name、base_url、model、api_key_ref、params（temperature、max_tokens、extra JSON）。
+- 列表：name、model、base_url、`key_configured`（区分已保存 / 环境变量）、created_at。
+- 新建：name、base_url、model、API key（可选，保存后不回显）或 api_key_ref（回退）、params（temperature、max_tokens、extra JSON）。
+- 卡片：设置/更换/清除已保存的 key。
 - 校验：base_url 必须 http(s)；api_key_ref 提示“环境变量名”；extra 非法 JSON 阻止提交并提示字段。
 - Probe：按钮显示 loading，成功显示 tool calling 是否支持，失败显示错误码与消息。
 - 不提供编辑/删除。
@@ -251,7 +252,7 @@ FACE_FRAME = {
 
 ## 8. 错误处理与安全
 
-- key 仍只存环境变量名；UI 不接收、不显示 key；probe/run 的密钥解析只在后端。
+- key 可由用户在 Web 中填写，明文存本地 SQLite（`providers.api_key`；2026-10-29 用户明确选择持久化）；API 响应、导出与日志不回显 key，`api_key_ref` 环境变量保留为回退。probe/run 的密钥解析只在后端。
 - 默认绑定 `127.0.0.1`；静态托管同源，CORS 保持现有白名单。
 - SSE 断线与后端不可达：横幅 + 退避重试 + 手动重试；不静默假装运行中。
 - 404：run/episode/benchmark 不存在显示明确页面。
