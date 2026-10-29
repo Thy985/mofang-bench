@@ -7881,6 +7881,15 @@ git add README.md PROJECT-PASSPORT.md docs/superpowers/plans/2026-10-26-m3-workb
 git commit -m "docs: M3 工作台运行说明与验证记录"
 ```
 
+**实测修正：** 后端全套 `uv run pytest -q` 为 176 passed。`npm run test:run` 起初
+以 1 个失败套件退出：Vitest 默认收集了 `frontend/e2e/workbench.spec.ts`，Playwright
+的 `test()` 在 Vitest 下抛错；`frontend/vitest.config.ts` 需加
+`exclude: [...configDefaults.exclude, 'e2e/**']`，排除后 156 passed、退出码 0。
+`scripts/fake_openai_server.py` 按末条消息返回：不是工具结果时返回
+`apply_moves ["R'"]`，是工具结果时返回纯文本 `solved`。seed 3、depth 1、2x2 题的
+scramble 为 `R'`，episode 遇到纯文本会暂停并再次催促，故 `apply_moves ["R'"]` 共
+应用 3 次；`R'` 四次复原，scramble `R'` 再加 3 次即恒等，第三次工具结果后立即解出。
+
 ---
 
 ## Self-Review
