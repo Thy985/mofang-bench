@@ -15,6 +15,8 @@ import {
   formatPercent,
   formatTokens,
 } from '../lib/format'
+import { Button } from '../ui/Button'
+import { Skeleton } from '../ui/Skeleton'
 
 export interface EpisodeViewProps {
   episode: Episode
@@ -41,23 +43,23 @@ export function EpisodeView({
           题目 {episode.task_key}
         </h1>
         <StatusBadge status={episode.status} />
-        <Link className="text-sm text-slate-400" to={`/runs/${episode.run_id}`}>
+        <Link className="text-sm text-text-dim" to={`/runs/${episode.run_id}`}>
           返回 run
         </Link>
       </div>
       <div className="grid gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
         <div>
-          <div className="text-xs text-slate-500">解出</div>
+          <div className="text-xs text-text-dim">解出</div>
           <div>{episode.solved ? '是' : '否'}</div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">步数 / 参照</div>
+          <div className="text-xs text-text-dim">步数 / 参照</div>
           <div>
             {episode.moves_used} / {episode.reference_length}
           </div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">效率</div>
+          <div className="text-xs text-text-dim">效率</div>
           <div>
             {episode.efficiency == null
               ? '—'
@@ -65,11 +67,11 @@ export function EpisodeView({
           </div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">耗时</div>
+          <div className="text-xs text-text-dim">耗时</div>
           <div>{formatDuration(episode.latency_ms)}</div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">tokens</div>
+          <div className="text-xs text-text-dim">tokens</div>
           <div>
             {formatTokens(
               (episode.tokens_in ?? 0) + (episode.tokens_out ?? 0),
@@ -77,22 +79,22 @@ export function EpisodeView({
           </div>
         </div>
         <div>
-          <div className="text-xs text-slate-500">失败码</div>
+          <div className="text-xs text-text-dim">失败码</div>
           <div>{episode.failure_code ?? '—'}</div>
         </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
         {cube}
-        <aside className="space-y-3 rounded border border-slate-800 bg-slate-900 p-4 text-sm">
+        <aside className="space-y-3 rounded border border-line bg-surface p-4 text-sm">
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => onSelect(-1)}
               className={`rounded px-2 py-1 text-xs ${
                 selected === -1
-                  ? 'bg-emerald-700 text-white'
-                  : 'bg-slate-800 text-slate-300'
+                  ? 'bg-accent-dim text-white'
+                  : 'bg-surface text-text'
               }`}
             >
               初始局面
@@ -105,8 +107,8 @@ export function EpisodeView({
                 onClick={() => onSelect(index)}
                 className={`rounded px-2 py-1 text-xs ${
                   selected === index
-                    ? 'bg-emerald-700 text-white'
-                    : 'bg-slate-800 text-slate-300'
+                    ? 'bg-accent-dim text-white'
+                    : 'bg-surface text-text'
                 }`}
               >
                 #{item.seq} {item.kind}
@@ -116,20 +118,19 @@ export function EpisodeView({
           </div>
 
           {step && (
-            <div className="space-y-2 border-t border-slate-800 pt-3">
-              <div className="text-slate-300">
+            <div className="space-y-2 border-t border-line pt-3">
+              <div className="text-text">
                 kind：{step.kind}
                 {step.tool_name ? ` · ${step.tool_name}` : ''}
               </div>
-              <div className="text-slate-400">
+              <div className="text-text-dim">
                 参照长度：{step.reference_length_after ?? '—'}
               </div>
               {Array.isArray(step.result?.applied) &&
                 step.result.applied.length > 0 &&
                 step.state && (
-                  <button
+                  <Button
                     type="button"
-                    className="rounded border border-slate-700 px-3 py-1 text-xs"
                     onClick={() =>
                       onPlayBatch(
                         selected,
@@ -139,21 +140,21 @@ export function EpisodeView({
                     }
                   >
                     播放本步
-                  </button>
+                  </Button>
                 )}
               <details>
-                <summary className="cursor-pointer text-xs text-slate-500">
+                <summary className="cursor-pointer text-xs text-text-dim">
                   参数
                 </summary>
-                <pre className="mt-1 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-400">
+                <pre className="mt-1 overflow-auto rounded bg-sunken p-2 text-[10px] text-text-dim">
                   {JSON.stringify(step.arguments, null, 2)}
                 </pre>
               </details>
               <details>
-                <summary className="cursor-pointer text-xs text-slate-500">
+                <summary className="cursor-pointer text-xs text-text-dim">
                   结果
                 </summary>
-                <pre className="mt-1 overflow-auto rounded bg-slate-950 p-2 text-[10px] text-slate-400">
+                <pre className="mt-1 overflow-auto rounded bg-sunken p-2 text-[10px] text-text-dim">
                   {JSON.stringify(step.result, null, 2)}
                 </pre>
               </details>
@@ -190,7 +191,13 @@ export default function EpisodePage() {
     runQuery.isPending ||
     benchmarkQuery.isPending
   ) {
-    return <p className="text-sm text-slate-400">加载中…</p>
+    return (
+      <div aria-busy="true" className="space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
+    )
   }
   const episode = episodeQuery.data
   const steps = stepsQuery.data ?? []

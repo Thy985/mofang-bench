@@ -7,13 +7,17 @@ import type {
 } from '../api/types'
 import { describeError } from '../lib/errors'
 import { formatPercent, shortId, statusLabel } from '../lib/format'
+import { Alert } from '../ui/Alert'
+import { Button } from '../ui/Button'
+import { Skeleton } from '../ui/Skeleton'
+import { Table, Td, Th } from '../ui/Table'
 
 function RunsHeader() {
   return (
     <div className="flex items-center justify-between">
       <h1 className="text-2xl font-semibold">Runs</h1>
       <Link
-        className="rounded bg-emerald-600 px-4 py-2 text-sm text-white"
+        className="rounded bg-accent px-4 py-2 text-sm text-white"
         to="/runs/new"
       >
         New Run
@@ -43,50 +47,44 @@ export function RunsView({
     <div className="space-y-4">
       <RunsHeader />
       {runs.length === 0 ? (
-        <p className="text-sm text-slate-400">还没有运行记录。</p>
+        <p className="text-sm text-text-dim">还没有运行记录。</p>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        <Table>
           <thead>
-            <tr className="border-b border-slate-800 text-left text-slate-400">
-              <th scope="col" className="py-2">
-                run
-              </th>
-              <th scope="col">provider</th>
-              <th scope="col">benchmark</th>
-              <th scope="col">状态</th>
-              <th scope="col">创建时间</th>
-              <th scope="col">解出率</th>
+            <tr>
+              <Th>run</Th>
+              <Th>provider</Th>
+              <Th>benchmark</Th>
+              <Th>状态</Th>
+              <Th>创建时间</Th>
+              <Th>解出率</Th>
             </tr>
           </thead>
           <tbody>
             {runs.map((run) => (
-              <tr
-                key={run.id}
-                data-testid="run-row"
-                className="border-b border-slate-900"
-              >
-                <td className="py-2">
+              <tr key={run.id} data-testid="run-row">
+                <Td>
                   <Link
-                    className="text-emerald-400"
+                    className="text-accent"
                     to={`/runs/${encodeURIComponent(run.id)}`}
                   >
                     {shortId(run.id)}
                   </Link>
-                </td>
-                <td>
+                </Td>
+                <Td>
                   {providerNames.get(run.provider_id) ?? run.provider_id}
-                </td>
-                <td>
+                </Td>
+                <Td>
                   {benchmarkNames.get(run.benchmark_id) ??
                     run.benchmark_id}
-                </td>
-                <td>{statusLabel(run.status)}</td>
-                <td>{new Date(run.created_at).toLocaleString()}</td>
-                <td>{formatPercent(run.totals?.totals.solve_rate)}</td>
+                </Td>
+                <Td>{statusLabel(run.status)}</Td>
+                <Td>{new Date(run.created_at).toLocaleString()}</Td>
+                <Td>{formatPercent(run.totals?.totals.solve_rate)}</Td>
               </tr>
             ))}
           </tbody>
-        </table>
+        </Table>
       )}
     </div>
   )
@@ -97,23 +95,23 @@ export default function RunsPage() {
   const providers = useProviders()
   const benchmarks = useBenchmarks()
   if (runs.isPending) {
-    return <p className="text-sm text-slate-400">加载中…</p>
+    return (
+      <div aria-busy="true" className="space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
+    )
   }
   if (runs.error) {
     return (
       <div className="space-y-4">
         <RunsHeader />
         <div className="flex items-center gap-3">
-          <p role="alert" className="text-rose-300">
-            {describeError(runs.error)}
-          </p>
-          <button
-            type="button"
-            onClick={() => void runs.refetch()}
-            className="rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-200"
-          >
+          <Alert>{describeError(runs.error)}</Alert>
+          <Button type="button" onClick={() => void runs.refetch()}>
             重试
-          </button>
+          </Button>
         </div>
       </div>
     )

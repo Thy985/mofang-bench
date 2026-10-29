@@ -8,7 +8,7 @@ export function ProgressChart({
   maxMoves: number
 }) {
   if (points.length === 0) {
-    return <p className="text-xs text-slate-500">暂无进度</p>
+    return <p className="text-xs text-text-dim">暂无进度</p>
   }
   const width = 320
   const height = 120

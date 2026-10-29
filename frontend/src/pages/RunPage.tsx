@@ -28,6 +28,9 @@ import {
   formatTokens,
   shortId,
 } from '../lib/format'
+import { Alert } from '../ui/Alert'
+import { Button } from '../ui/Button'
+import { Skeleton } from '../ui/Skeleton'
 
 function useElapsed(startedAt: string | null): number | null {
   const [now, setNow] = useState(() => Date.now())
@@ -41,8 +44,8 @@ function useElapsed(startedAt: string | null): number | null {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="truncate text-slate-200">{value}</div>
+      <div className="text-xs text-text-dim">{label}</div>
+      <div className="truncate text-text">{value}</div>
     </div>
   )
 }
@@ -70,7 +73,7 @@ export function RunLivePanel({
     (item) => item.status !== 'running',
   ).length
   return (
-    <aside className="space-y-4 self-start rounded border border-slate-800 bg-slate-900 p-4 text-sm">
+    <aside className="space-y-4 self-start rounded border border-line bg-surface p-4 text-sm">
       <div className="grid grid-cols-2 gap-3">
         <Stat
           label="provider"
@@ -103,7 +106,7 @@ export function RunLivePanel({
       </div>
       <div className="flex items-center gap-2">
         <StatusBadge status={episode?.status ?? run.status} />
-        <span className="text-xs text-slate-500">成本：未配置价格</span>
+        <span className="text-xs text-text-dim">成本：未配置价格</span>
       </div>
       {live.thinking && (
         <p data-testid="thinking" className="text-sky-300">
@@ -123,14 +126,14 @@ export function RunLivePanel({
       />
       <ToolLog logs={live.logs} />
       {(run.status === 'queued' || run.status === 'running') && (
-        <button
+        <Button
+          variant="danger"
           type="button"
           onClick={onCancel}
           disabled={cancelling}
-          className="rounded border border-rose-700 px-3 py-1.5 text-rose-300 disabled:opacity-50"
         >
           取消 run
-        </button>
+        </Button>
       )}
     </aside>
   )
@@ -226,13 +229,19 @@ export default function RunPage() {
 
   if (!id) return null
   if (runQuery.isPending) {
-    return <p className="text-sm text-slate-400">加载中…</p>
+    return (
+      <div aria-busy="true" className="space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
+    )
   }
   if (runQuery.error) {
     return <p className="text-rose-300">{describeError(runQuery.error)}</p>
   }
   if (!run) {
-    return <p className="text-sm text-slate-400">run 不存在。</p>
+    return <p className="text-sm text-text-dim">run 不存在。</p>
   }
   const provider =
     providers.data?.find((item) => item.id === run.provider_id) ?? null
@@ -253,14 +262,12 @@ export default function RunPage() {
         <span data-testid="run-status">
           <StatusBadge status={run.status} />
         </span>
-        <Link className="text-sm text-slate-400" to="/runs">
+        <Link className="text-sm text-text-dim" to="/runs">
           返回历史
         </Link>
       </div>
       {cancel.error && (
-        <p role="alert" className="text-rose-300">
-          {describeError(cancel.error)}
-        </p>
+        <Alert>{describeError(cancel.error)}</Alert>
       )}
 
       {live.connection === 'reconnecting' && (
@@ -270,14 +277,14 @@ export default function RunPage() {
           className="flex flex-wrap items-center gap-3 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200"
         >
           <span>连接中断，正在重连…</span>
-          <button
+          <Button
+            variant="warning"
             type="button"
             data-testid="retry-connection"
-            className="rounded border border-amber-600 px-2 py-1"
             onClick={() => live.retry()}
           >
             立即重试
-          </button>
+          </Button>
         </div>
       )}
 
@@ -293,9 +300,9 @@ export default function RunPage() {
           />
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="flex items-center gap-2">
-              <span className="text-slate-400">速度</span>
+              <span className="text-text-dim">速度</span>
               <select
-                className="rounded bg-slate-900 px-2 py-1"
+                className="rounded bg-surface px-2 py-1"
                 value={speed}
                 onChange={(event) =>
                   setSpeed(Number(event.target.value))
@@ -307,20 +314,18 @@ export default function RunPage() {
                 <option value={100}>instant</option>
               </select>
             </label>
-            <button
+            <Button
               type="button"
-              className="rounded border border-slate-700 px-3 py-1"
               onClick={() => setPaused((current) => !current)}
             >
               {paused ? '继续' : '暂停'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="rounded border border-slate-700 px-3 py-1"
               onClick={() => setSkipToken((current) => current + 1)}
             >
               跳到最新
-            </button>
+            </Button>
           </div>
         </div>
 

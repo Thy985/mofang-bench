@@ -17,6 +17,10 @@ import type {
   RunCreate,
   ToolMode,
 } from '../api/types'
+import { Alert } from '../ui/Alert'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
+import { Skeleton } from '../ui/Skeleton'
 
 const DEFAULTS: Record<CubeKind, Budget> = {
   '2x2': {
@@ -165,11 +169,7 @@ export function NewRunView({
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">New Run</h1>
-      {error && (
-        <p role="alert" className="text-sm text-rose-300">
-          {error}
-        </p>
-      )}
+      {error && <Alert tone="danger">{error}</Alert>}
       {!error && providers.length === 0 && (
         <p className="text-sm text-amber-300">
           还没有 provider，先到 <Link to="/providers">Providers</Link> 配置。
@@ -184,12 +184,12 @@ export function NewRunView({
       <form
         noValidate
         onSubmit={handleSubmit}
-        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
         <label className="grid gap-1 text-sm">
           <span>Provider</span>
           <select
-            className="rounded bg-slate-950 px-3 py-2"
+            className="rounded bg-sunken px-3 py-2"
             value={providerId}
             onChange={(event) => setProviderId(event.target.value)}
           >
@@ -203,7 +203,7 @@ export function NewRunView({
         <label className="grid gap-1 text-sm">
           <span>Benchmark</span>
           <select
-            className="rounded bg-slate-950 px-3 py-2"
+            className="rounded bg-sunken px-3 py-2"
             value={benchmarkId}
             onChange={(event) => setBenchmarkId(event.target.value)}
           >
@@ -217,7 +217,7 @@ export function NewRunView({
         <label className="grid gap-1 text-sm">
           <span>工具模式</span>
           <select
-            className="rounded bg-slate-950 px-3 py-2"
+            className="rounded bg-sunken px-3 py-2"
             value={toolMode}
             onChange={(event) =>
               setToolMode(event.target.value as ToolMode)
@@ -229,7 +229,7 @@ export function NewRunView({
           </select>
         </label>
         <div className="grid gap-2 md:col-span-2">
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-text-dim">
             预算上限（未配置价格，仅统计 tokens）
           </p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -244,59 +244,52 @@ export function NewRunView({
             ).map(([key, label]) => (
               <label key={key} className="grid gap-1 text-xs">
                 <span>{key}</span>
-                <input
+                <Input
                   aria-label={key}
                   type="number"
                   min={1}
                   step={FLOAT_KEYS.has(key) ? 'any' : undefined}
-                  className="rounded bg-slate-950 px-2 py-1.5"
                   value={budget[key]}
                   onChange={(event) =>
                     updateBudget(key, event.target.value)
                   }
                 />
-                <span className="text-slate-500">{label}</span>
+                <span className="text-text-dim">{label}</span>
               </label>
             ))}
           </div>
         </div>
         <div className="grid gap-2 md:col-span-2">
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-text-dim">
             可选参数覆盖（留空沿用 provider 默认）
           </p>
           <div className="grid gap-2 sm:grid-cols-2">
             <label className="grid gap-1 text-xs">
               <span>temperature</span>
-              <input
+              <Input
                 aria-label="params_temperature"
-                className="rounded bg-slate-950 px-2 py-1.5"
                 value={temperature}
                 onChange={(event) => setTemperature(event.target.value)}
               />
-              <span className="text-slate-500">0 到 2，留空不覆盖</span>
+              <span className="text-text-dim">0 到 2，留空不覆盖</span>
             </label>
             <label className="grid gap-1 text-xs">
               <span>max_tokens</span>
-              <input
+              <Input
                 aria-label="params_max_tokens"
                 type="number"
                 min={1}
-                className="rounded bg-slate-950 px-2 py-1.5"
                 value={maxTokens}
                 onChange={(event) => setMaxTokens(event.target.value)}
               />
-              <span className="text-slate-500">留空不覆盖</span>
+              <span className="text-text-dim">留空不覆盖</span>
             </label>
           </div>
         </div>
         <div className="flex items-center gap-3 md:col-span-2">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
+          <Button variant="primary" type="submit" disabled={submitting}>
             启动 run
-          </button>
+          </Button>
           {formError && (
             <p role="alert" className="text-sm text-rose-300">
               {formError}
@@ -322,7 +315,13 @@ export default function NewRunPage() {
   })
 
   if (providers.isPending || benchmarks.isPending) {
-    return <p className="text-sm text-slate-400">加载中…</p>
+    return (
+      <div aria-busy="true" className="space-y-2">
+        <Skeleton className="h-4 w-1/3" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6" />
+      </div>
+    )
   }
 
   const loadError = providers.error ?? benchmarks.error

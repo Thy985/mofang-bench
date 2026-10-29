@@ -1,5 +1,7 @@
 import { statusLabel } from '../lib/format'
 
+// 状态色豁免：这里的 sky/emerald/rose/amber 是运行状态语义（进行中/成功/失败/警告），
+// 不是主题语义，不收敛到 accent/warning/danger token，保留原值。
 const COLORS: Record<string, string> = {
   running: 'bg-sky-900/60 text-sky-300',
   queued: 'bg-slate-800 text-slate-300',
