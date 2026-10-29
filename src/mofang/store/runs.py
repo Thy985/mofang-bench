@@ -282,6 +282,17 @@ def get_steps(db: Database, episode_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def fail_running_episodes(db: Database, run_id: str, message: str) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE episodes SET status = 'interrupted', error = ?, finished_at = ?
+            WHERE run_id = ? AND status = 'running'
+            """,
+            (message, now(), run_id),
+        )
+
+
 def mark_running_interrupted(db: Database) -> int:
     with db.transaction() as conn:
         count = conn.execute(

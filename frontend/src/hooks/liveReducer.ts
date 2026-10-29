@@ -35,6 +35,7 @@ export interface LiveState {
   progress: ProgressPoint[]
   lastEventId: number
   connection: ConnectionState
+  thinking: boolean
   latestBatch: MoveBatch | null
   firstInvalidCall: { tool: string; message: string } | null
   error: string | null
@@ -65,6 +66,7 @@ export function initialLiveState(): LiveState {
     progress: [],
     lastEventId: 0,
     connection: 'connecting',
+    thinking: false,
     latestBatch: null,
     firstInvalidCall: null,
     error: null,
@@ -134,6 +136,7 @@ export function liveReducer(
               : [],
             latestBatch: null,
             firstInvalidCall: null,
+            thinking: false,
           }
         : {}),
     }
@@ -144,6 +147,15 @@ export function liveReducer(
   const next = { ...state, lastEventId: event.id }
 
   switch (event.type) {
+    case 'run.started': {
+      const startedAt = state.run?.started_at ?? event.ts
+      return {
+        ...next,
+        run: state.run
+          ? { ...state.run, status: 'running', started_at: startedAt }
+          : state.run,
+      }
+    }
     case 'episode.started': {
       const episode = episodeFromStarted(event)
       const episodes = [
@@ -159,9 +171,12 @@ export function liveReducer(
         progress: [{ moves: 0, length: episode.reference_length }],
         latestBatch: null,
         firstInvalidCall: null,
+        thinking: false,
         episodeToken: state.episodeToken + 1,
       }
     }
+    case 'model.turn.started':
+      return { ...next, thinking: true }
     case 'model.message': {
       const logs = event.data.content
         ? [
@@ -174,7 +189,12 @@ export function liveReducer(
             },
           ]
         : state.logs
-      return { ...next, logs, usage: event.data.usage }
+      return {
+        ...next,
+        logs,
+        usage: event.data.usage,
+        thinking: false,
+      }
     }
     case 'tool.call': {
       return {
@@ -271,6 +291,7 @@ export function liveReducer(
               totals: event.data.totals,
             }
           : state.run,
+        thinking: false,
         connection: 'closed',
       }
     case 'run.error':
@@ -280,6 +301,7 @@ export function liveReducer(
           ? { ...state.run, status: 'failed', error: event.data.message }
           : state.run,
         error: event.data.message,
+        thinking: false,
         connection: 'closed',
       }
     default:

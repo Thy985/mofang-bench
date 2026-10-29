@@ -105,6 +105,11 @@ export function RunLivePanel({
         <StatusBadge status={episode?.status ?? run.status} />
         <span className="text-xs text-slate-500">成本：未配置价格</span>
       </div>
+      {live.thinking && (
+        <p data-testid="thinking" className="text-sky-300">
+          思考中…
+        </p>
+      )}
       {live.firstInvalidCall && (
         <p className="text-amber-300">
           首次非法调用：{live.firstInvalidCall.tool} ·{' '}
@@ -147,6 +152,11 @@ export default function RunPage() {
     mutationFn: () => api.runs.cancel(id!),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.run(id!) })
+    },
+    // spec §8：409（已结束/不可取消）时刷新状态，别让界面停在旧的“运行中”。
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.run(id!) })
+      void queryClient.invalidateQueries({ queryKey: qk.runs })
     },
   })
   const [speed, setSpeed] = useState(1)
@@ -226,6 +236,13 @@ export default function RunPage() {
   }
   const provider =
     providers.data?.find((item) => item.id === run.provider_id) ?? null
+  const resultError = report.error
+    ? describeError(report.error)
+    : run.status === 'failed'
+      ? (run.error ?? '运行失败')
+      : run.status === 'interrupted'
+        ? '服务重启导致运行中断，以下为已完成部分。'
+        : null
 
   return (
     <div className="space-y-6">
@@ -244,6 +261,24 @@ export default function RunPage() {
         <p role="alert" className="text-rose-300">
           {describeError(cancel.error)}
         </p>
+      )}
+
+      {live.connection === 'reconnecting' && (
+        <div
+          data-testid="connection-banner"
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200"
+        >
+          <span>连接中断，正在重连…</span>
+          <button
+            type="button"
+            data-testid="retry-connection"
+            className="rounded border border-amber-600 px-2 py-1"
+            onClick={() => live.retry()}
+          >
+            立即重试
+          </button>
+        </div>
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -307,7 +342,7 @@ export default function RunPage() {
           run={run}
           provider={provider}
           benchmark={benchmark.data ?? null}
-          error={report.error ? describeError(report.error) : null}
+          error={resultError}
         />
       )}
     </div>

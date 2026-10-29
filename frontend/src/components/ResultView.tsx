@@ -57,6 +57,14 @@ export function ResultView({
   }
   return (
     <section data-testid="run-result" className="space-y-4">
+      {error && (
+        <p
+          role="alert"
+          className="rounded border border-rose-800 bg-rose-950/40 px-3 py-2 text-rose-200"
+        >
+          {error}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-semibold">运行结果</h2>
         <span className="text-sm text-slate-400">

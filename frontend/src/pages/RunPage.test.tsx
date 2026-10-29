@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -342,5 +349,45 @@ describe('RunPage', () => {
       ),
     )
     await waitFor(() => expect(cube).toHaveAttribute('data-token', '2'))
+  })
+
+  it('shows a reconnect banner and retries on demand', async () => {
+    renderPage({ snapshotState: null })
+    await waitFor(() =>
+      expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    act(() => {
+      FakeEventSource.instances[0].onerror?.()
+    })
+    const banner = await screen.findByTestId('connection-banner')
+    expect(banner).toHaveTextContent('连接中断，正在重连…')
+    fireEvent.click(screen.getByTestId('retry-connection'))
+    await waitFor(() =>
+      expect(FakeEventSource.instances.length).toBeGreaterThanOrEqual(2),
+    )
+  })
+
+  it('shows the failure reason above the partial report', async () => {
+    renderPage({ snapshotState: null })
+    await waitFor(() =>
+      expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    act(() => {
+      const source = FakeEventSource.instances[0]
+      source.onopen?.()
+      source.emit('run.error', {
+        id: 4,
+        type: 'run.error',
+        run_id: 'run12345678',
+        episode_id: null,
+        ts: '2026-10-26T00:00:04+00:00',
+        data: { message: '上游模型不可用' },
+      })
+    })
+    const result = await screen.findByTestId('run-result')
+    await waitFor(() => expect(result).toHaveTextContent('1 / 1'))
+    expect(within(result).getByRole('alert')).toHaveTextContent(
+      '上游模型不可用',
+    )
   })
 })

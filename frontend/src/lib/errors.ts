@@ -3,7 +3,7 @@ import { ApiError } from '../api/client'
 const STATUS_LABELS: Record<number, string> = {
   400: '请求不合法',
   404: '未找到该记录',
-  409: '已存在相同记录',
+  409: '请求冲突',
   422: '字段校验未通过',
   502: '上游模型服务不可用',
 }

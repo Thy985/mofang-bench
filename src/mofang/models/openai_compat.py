@@ -83,12 +83,17 @@ class OpenAICompatibleAdapter:
                     json=payload,
                     headers=self._headers,
                 )
-            except httpx.TimeoutException as exc:
+            except httpx.TransportError as exc:
                 last_error = str(exc) or f"request timed out after {self.timeout:g}s"
                 if attempt < 3:
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
-                raise ProviderError("timeout", last_error, retryable=True) from exc
+                kind = (
+                    "timeout"
+                    if isinstance(exc, httpx.TimeoutException)
+                    else "transport"
+                )
+                raise ProviderError(kind, last_error, retryable=True) from exc
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = response.text
                 if attempt < 3:

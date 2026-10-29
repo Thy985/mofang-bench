@@ -140,3 +140,32 @@ async def test_provider_factory_error_marks_run_failed(tmp_path: Path) -> None:
     assert run["status"] == "failed"
     assert "no key" in run["error"]
     assert [event.type for event in bus.history(run_id)][-1] == "run.error"
+
+
+async def test_chat_crash_interrupts_inflight_episode(tmp_path: Path) -> None:
+    db, run_id = seed_run(tmp_path)
+    bus = RunEventBus()
+
+    class BoomProvider:
+        async def probe_tools(self) -> bool:
+            return True
+
+        async def chat(self, messages, tools, params):
+            raise RuntimeError("boom")
+
+    service = RunService(
+        db,
+        bus,
+        provider_factory=lambda record: BoomProvider(),
+        solver_factory=solver_factory,
+    )
+    service.start(run_id)
+    await service.wait(run_id)
+    assert get_run(db, run_id)["status"] == "failed"
+    episodes = get_run_episodes(db, run_id)
+    assert episodes
+    assert all(item["status"] == "interrupted" for item in episodes)
+    assert "running" not in [item["status"] for item in episodes]
+    assert episodes[0]["error"] == "boom"
+    assert bus.history(run_id)[-1].type == "run.error"
+

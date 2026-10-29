@@ -7606,7 +7606,7 @@ if __name__ == "__main__":
     main()
 ```
 
-`build_completion` 的三个分支分别是：首次对话返回 `apply_moves` 工具调用；已有 tool 结果时返回 `solved` 文本；probe（无 `apply_moves` 工具）返回 `ok` 文本。
+`build_completion` 有三个分支：首次对话返回 `apply_moves` 工具调用；probe（无 `apply_moves` 工具）返回 `ok` 文本；另有“最后一条消息是 tool 结果时返回 `solved` 文本”的分支，但 `ContextBuilder.build` 总会在末尾追加一条 `state_text` 用户消息，应用路径下 `messages[-1].role` 永远不是 `tool`，因此该分支只在 mock 的隔离单测里可达。
 
 E2E 用 2x2 / depth 1 / seed 3，`generate_scramble` 对它的产出是 `["R'"]`，mock 默认动作就是 `R'`。`R'` 的阶为 4：初始打乱一次后再应用到第 3 次才回到单位元，所以这一题用 3 步解出、重放里有 3 个 `apply_moves` 步骤（实测确认）。生成器或种子若变化，E2E 会在结果/步数断言处失败——这是有意的强约束，不要放宽成“跑完即可”。
 
@@ -7919,8 +7919,12 @@ git commit -m "docs: M3 工作台运行说明与验证记录"
 **已知执行注意：**
 
 - Task 14 的 `src/test/fixtures.ts` 必须创建，`makeRun`/`makeEpisode` 从 `liveReducer.test.ts` 移出，避免测试互相导入。
-- Task 17 的 mock 必须按三分支实现（apply_moves 首次、apply_moves 后 tool 结果返回 `solved`、无 apply_moves 的 probe 返回 `ok`）。
+- Task 17 的 mock 按三分支实现，但“tool 结果后返回 `solved`”在应用路径不可达（`ContextBuilder.build` 总追加 `state_text`），只在该 mock 的隔离单测里覆盖；E2E 实际走 `apply_moves` 与 `ok` 两个分支。
 - E2E 依赖 2x2 表；若 8000/5173/20129 被占用先停止进程。
+
+## 终审修复（2026-10-29）
+
+终审后的单轮修复补齐了四项 spec 要求：`useRunEvents` 暴露 `retry`，Run 页在 `reconnecting` 时显示断线横幅与“立即重试”，手动重试保留已落地的日志与 usage；结果视图把 `run.error`（以及 `interrupted` 的服务重启说明）作为 alert 展示在汇总上方，`failed`/`interrupted` run 不再没有原因；`liveReducer` 处理 `run.started` 与 `model.turn.started`，排队 run 能及时转为运行中并显示“思考中”；OpenAI 适配器把 `httpx.TransportError`（含超时）统一按原指数退避重试后转为 `ProviderError`，服务层 `_fail` 兜底把仍在运行的 episode 置为 `interrupted`，不再留在 `running` 被报告计数。另处理两个 minor：取消接口 409 时通过 mutation `onError` 刷新 run 与 runs，全局 409 文案改为“请求冲突”；并清理了 mock `solved` 分支在应用路径可达的两处过时说法。
 
 
 

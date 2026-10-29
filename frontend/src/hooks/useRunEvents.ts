@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { api } from '../api/client'
 import type { RunEvent } from '../api/types'
 import {
@@ -20,15 +20,24 @@ const EVENT_TYPES: RunEvent['type'][] = [
   'run.error',
 ]
 
-export function useRunEvents(runId: string): LiveState {
+export type RunEventsState = LiveState & { retry: () => void }
+
+export function useRunEvents(runId: string): RunEventsState {
   const [state, dispatch] = useReducer(liveReducer, undefined, initialLiveState)
   const sourceRef = useRef<EventSource | null>(null)
   const retryRef = useRef(0)
   const lastEventIdRef = useRef(0)
+  const connectRef = useRef<(initial: boolean) => void>(() => {})
 
   useEffect(() => {
     lastEventIdRef.current = state.lastEventId
   }, [state.lastEventId])
+
+  // 手动重试只重建流，不清空已落地的日志与 usage（snapshotLanded 保持为 true）。
+  const retry = useCallback(() => {
+    retryRef.current = 0
+    connectRef.current(false)
+  }, [])
 
   useEffect(() => {
     // 每个 effect 实例独立的存活标记：runId 切换时旧 snapshot 的迟到响应必须作废。
@@ -40,6 +49,17 @@ export function useRunEvents(runId: string): LiveState {
     retryRef.current = 0
 
     async function connect(initial: boolean) {
+      // 重新连接前先清掉待执行的退避定时器，避免手动重试后又叠加一条自动重连。
+      if (timer !== undefined) {
+        window.clearTimeout(timer)
+        timer = undefined
+      }
+      const previous = sourceRef.current
+      if (previous) {
+        previous.onerror = null
+        previous.close()
+        sourceRef.current = null
+      }
       dispatch({
         type: 'connection',
         connection: initial ? 'connecting' : 'reconnecting',
@@ -77,7 +97,6 @@ export function useRunEvents(runId: string): LiveState {
         lastEventIdRef.current,
       )
       const source = new EventSource(api.runs.eventsUrl(runId, after))
-      sourceRef.current?.close()
       sourceRef.current = source
       source.onopen = () => {
         retryRef.current = 0
@@ -108,13 +127,20 @@ export function useRunEvents(runId: string): LiveState {
       }
     }
 
+    connectRef.current = connect
     void connect(true)
     return () => {
       alive = false
+      connectRef.current = () => {}
       if (timer !== undefined) window.clearTimeout(timer)
-      sourceRef.current?.close()
+      const source = sourceRef.current
+      if (source) {
+        source.onerror = null
+        source.close()
+        sourceRef.current = null
+      }
     }
   }, [runId])
 
-  return state
+  return { ...state, retry }
 }

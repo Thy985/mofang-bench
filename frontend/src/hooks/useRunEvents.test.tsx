@@ -209,4 +209,39 @@ describe('useRunEvents', () => {
       .filter((delay): delay is number => typeof delay === 'number')
     expect(delays).toContain(2000)
   })
+
+  it('retries manually without clearing live logs', async () => {
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    const first = FakeEventSource.instances[0]
+    act(() => {
+      first.onopen?.()
+      first.emit('model.message', {
+        id: 4,
+        type: 'model.message',
+        run_id: 'r1',
+        episode_id: 'e1',
+        ts: '2026-10-26T00:00:04+00:00',
+        data: {
+          content: 'kept',
+          tool_calls: 0,
+          usage: { prompt_tokens: 2, completion_tokens: 2 },
+        },
+      })
+    })
+    await waitFor(() => expect(result.current.logs).toHaveLength(1))
+
+    act(() => {
+      result.current.retry()
+    })
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2))
+    const second = FakeEventSource.instances[1]
+    expect(second.url).toBe('/api/runs/r1/events?after=4')
+    expect(first.closed).toBe(true)
+    expect(result.current.logs).toHaveLength(1)
+    expect(result.current.usage).toEqual({
+      prompt_tokens: 2,
+      completion_tokens: 2,
+    })
+  })
 })

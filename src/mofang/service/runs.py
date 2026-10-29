@@ -15,6 +15,7 @@ from ..store.providers import ProviderRecord, get_provider
 from ..store.runs import (
     add_steps,
     create_episode,
+    fail_running_episodes,
     finish_episode,
     get_run,
     set_run_status,
@@ -170,6 +171,7 @@ class RunService:
                     solver_close()
 
     def _fail(self, run_id: str, message: str) -> None:
+        fail_running_episodes(self.db, run_id, message)
         set_run_status(
             self.db, run_id, "failed", error=message, finished=True
         )

@@ -296,4 +296,77 @@ describe('liveReducer', () => {
     expect(state.error).toBe('boom')
     expect(state.connection).toBe('closed')
   })
+
+  it('marks a queued run as running when run.started arrives', () => {
+    let state = apply(initialLiveState(), {
+      type: 'snapshot',
+      run: makeRun({ status: 'queued', started_at: null }),
+      episodes: [],
+      lastEventId: 0,
+      snapshotState: null,
+      reset: true,
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('run.started', { benchmark_id: 'b1' }, 1, null),
+    })
+    expect(state.run?.status).toBe('running')
+    expect(state.run?.started_at).toBe('2026-10-26T00:00:03+00:00')
+    expect(state.run?.id).toBe('r1')
+    expect(state.run?.benchmark_id).toBe('b1')
+  })
+
+  it('toggles thinking on model.turn.started and model.message', () => {
+    let state = apply(stateAfterSnapshot(), {
+      type: 'event',
+      event: event('model.turn.started', { moves_used: 0 }, 1),
+    })
+    expect(state.thinking).toBe(true)
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'model.message',
+        {
+          content: 'thinking',
+          tool_calls: 0,
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        },
+        2,
+      ),
+    })
+    expect(state.thinking).toBe(false)
+  })
+
+  it('clears thinking on run.finished and run.error', () => {
+    let state = apply(stateAfterSnapshot(), {
+      type: 'event',
+      event: event('model.turn.started', { moves_used: 0 }, 1),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('run.finished', { status: 'finished', totals: null }, 2, null),
+    })
+    expect(state.thinking).toBe(false)
+
+    state = apply(stateAfterSnapshot(), {
+      type: 'event',
+      event: event('model.turn.started', { moves_used: 0 }, 1),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('run.error', { message: 'boom' }, 2, null),
+    })
+    expect(state.thinking).toBe(false)
+  })
 })
+
+function stateAfterSnapshot() {
+  return apply(initialLiveState(), {
+    type: 'snapshot',
+    run: makeRun(),
+    episodes: [],
+    lastEventId: 0,
+    snapshotState: null,
+    reset: true,
+  })
+}

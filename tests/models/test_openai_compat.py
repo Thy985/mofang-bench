@@ -157,3 +157,20 @@ async def test_auth_error_does_not_retry(adapter: OpenAICompatibleAdapter) -> No
         )
     assert exc.value.kind == "auth"
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_connect_error_raises_retryable_transport_error(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        side_effect=httpx.ConnectError("refused")
+    )
+    with pytest.raises(ProviderError) as exc:
+        await adapter.chat(
+            [{"role": "user", "content": "go"}], [], ModelParams()
+        )
+    assert exc.value.kind == "transport"
+    assert exc.value.retryable is True
+    assert route.call_count == 4
+
