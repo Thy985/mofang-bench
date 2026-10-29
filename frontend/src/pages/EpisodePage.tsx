@@ -16,6 +16,7 @@ import {
   formatPercent,
   formatTokens,
 } from '../lib/format'
+import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
 import { Skeleton } from '../ui/Skeleton'
 
@@ -184,7 +185,7 @@ export default function EpisodePage() {
     runQuery.error ??
     benchmarkQuery.error
   if (failure) {
-    return <p className="text-rose-300">{describeError(failure)}</p>
+    return <Alert tone="danger">{describeError(failure)}</Alert>
   }
   if (
     episodeQuery.isPending ||

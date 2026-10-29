@@ -239,7 +239,7 @@ export default function RunPage() {
     )
   }
   if (runQuery.error) {
-    return <p className="text-rose-300">{describeError(runQuery.error)}</p>
+    return <Alert tone="danger">{describeError(runQuery.error)}</Alert>
   }
   if (!run) {
     return <p className="text-sm text-text-dim">run 不存在。</p>

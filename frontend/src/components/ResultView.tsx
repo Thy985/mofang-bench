@@ -41,9 +41,7 @@ export function ResultView({
     return (
       <section data-testid="run-result" className="text-sm">
         {error ? (
-          <p role="alert" className="text-rose-300">
-            {error}
-          </p>
+          <Alert tone="danger">{error}</Alert>
         ) : (
           <div aria-busy="true" className="space-y-2">
             <Skeleton className="h-4 w-1/3" />
