@@ -86,6 +86,60 @@ curl -N http://127.0.0.1:8000/api/runs/<id>/events
 `/api/compare`。默认 DB 为 `data/mofang.db`，2x2 距离表为
 `data/cache/2x2_distances.pkl`，可用 `--db` / `--table` 覆盖。
 
+## 前端工作台
+
+开发期两个进程：
+
+```bash
+# 终端 1
+export OPENAI_API_KEY=...
+uv run mofang serve
+
+# 终端 2
+cd frontend
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173`。流程：Providers 新建 provider（填环境变量名）→
+Probe → Benchmarks 生成题集 → New Run → 实时 3D → 结果与导出 →
+Episode 回放。
+
+单端口演示：
+
+```bash
+cd frontend && npm run build
+cd ..
+uv run mofang serve
+```
+
+打开 `http://127.0.0.1:8000`（FastAPI 托管 `frontend/dist`）。
+
+只用 API、不托管前端时：`uv run mofang serve --web-dir ""`（或 `MOFANG_WEB_DIR=`）。
+
+无真实模型时可用 mock：
+
+```bash
+uv run python scripts/fake_openai_server.py --port 20129
+export OPENAI_API_KEY=test
+uv run mofang serve
+```
+
+Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
+（scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第四步（第三次
+应用）后工具结果判定解出，随后一轮返回纯文本收尾。
+
+前端验证：
+
+```bash
+cd frontend
+npm run typecheck
+npm run test:run
+npm run build
+npx playwright install chromium   # 首次
+npm run e2e
+```
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有

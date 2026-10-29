@@ -3,7 +3,7 @@
 - 项目：魔方模型能力测试台（后端 + 本地 API）
 - 目录：`D:\Projects\Archive\mofang`
 - 更新：2026-10-26
-- 阶段：Plan 1（M0–M1）与 Plan 2（M2 API 工作台）本地完成，待 M3 Web UI
+- 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做
 
 ## 环境事实（来源：D:\Company\state\CURRENT-STATE.md，2026-09-18；2026-10-26 定点复核）
 
@@ -11,10 +11,10 @@
 |---|---|
 | Python | 3.12.13（uv 管理，`python` 可解析） |
 | uv | 0.12.7 |
-| Node.js | 24.19.0（Plan 1 不使用；Plan 2 前端使用） |
+| Node.js | 24.19.0（前端开发与 E2E 使用） |
 | npm | 11.17.0 |
 | Git | 2.55.0.windows.2 |
-| Playwright | 1.63.0（Plan 2 E2E 使用） |
+| Playwright | 1.64.1（M3 E2E 使用，2026-10-26 复核） |
 | 磁盘 | D: 约 141.9G 空闲（2026-09-17 账；求解器表 <1GB） |
 | Docker | 未安装；本项目不需要 |
 
@@ -24,7 +24,10 @@
 - 主依赖：`httpx`、`pydantic`、`fastapi`、`uvicorn`。
 - 开发依赖：`pytest`、`pytest-asyncio`、`hypothesis`、`respx`。
 - 可选求解依赖：`RubikTwoPhase>=1.1.1`（GPLv3+），仅 3x3 worker 子进程导入。
-- 不需要 Company/User 级新能力；若后续需要浏览器 E2E，Playwright 已 active。
+- 不需要 Company/User 级新能力；Playwright 已 active 并用于 M3 E2E。
+- 前端工具链（`frontend/`，Node 24 / npm 11）：React 19、Vite、Tailwind v4、
+  TanStack Query、three、@react-three/fiber、@react-three/drei、Vitest、
+  Testing Library、Playwright。依赖装在 `frontend/node_modules`，不涉及全局。
 
 ## 启动与验证命令
 
@@ -48,18 +51,38 @@ uv run pytest tests/cube/test_solver_3x3.py -m slow -v
 uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_distances.pkl
 ```
 
+前端（`frontend/`）：
+
+```bash
+npm install
+npm run typecheck
+npm run test:run
+npm run build
+npm run e2e
+```
+
+E2E 由 Playwright 拉起三个进程（`workers: 1` 串行）：mock OpenAI
+`127.0.0.1:20129`、`uv run mofang serve --port 8000`（临时 DB）、
+Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直接失败。
+
 ## 数据目录
 
 - `data/cache/`：求解器距离表缓存（gitignored）。
 - `twophase/`：RubikTwoPhase 首次运行生成的求解表（约 80MB，gitignored）；库按相对路径 `twophase/` 查找，因此命令需在项目根执行。
 - `data/benchmarks/`：冻结基准题 JSON。
 - `data/reports/`：运行报告 JSON（gitignored）。
+- `data/e2e-<timestamp>.db`：Playwright E2E 临时 DB（gitignored）。
+- `frontend/dist/`：Vite 构建产物，由 FastAPI 托管（gitignored）；`frontend/node_modules` 同样不入库。
+- `frontend/test-results/`、`frontend/playwright-report/`：E2E 产物（gitignored）。
 
 ## 端口
 
 - Plan 1：CLI，无服务端口。
 - M2：FastAPI `127.0.0.1:8000`（`uv run mofang serve`）；DB 默认 `data/mofang.db`。
-- M3：Vite `127.0.0.1:5173`（CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`）。
+- M3 开发：Vite `127.0.0.1:5173`（CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`）。
+- M3 单端口演示：先 `npm run build`，再由 FastAPI `127.0.0.1:8000` 托管 `frontend/dist`；
+  `--web-dir ""`（或 `MOFANG_WEB_DIR=`）可关闭托管，只留 API。
+- E2E mock OpenAI：`127.0.0.1:20129`（`scripts/fake_openai_server.py`）。
 
 ## 模型接入
 
@@ -80,5 +103,6 @@ uv run python scripts/build_2x2_table.py --max-depth 11 --out data/cache/2x2_dis
 
 - 完整 2x2 距离表构建较慢、占用内存较高；测试使用浅档部分表。
 - 3x3 首次建表约 30 分钟 / 80MB，且需要 `--extra solver`。
-- 多模态、3x3 精确最优、多 trial / pass@k、React/three.js Web UI（M3）尚未实现。
+- 多模态、3x3 精确最优、多 trial / pass@k 尚未实现。
+- M4 对比页（`/api/compare` 已有后端端点）尚未实现前端。
 - 同一 run 内 episode 串行；跨 run 由 `RunService` 的锁串行，长跑会排队。

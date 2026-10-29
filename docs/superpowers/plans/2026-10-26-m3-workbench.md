@@ -7817,7 +7817,8 @@ uv run mofang serve
 ```
 
 Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
-（scramble 为 `R'`），mock 会返回 `R'` 并解出。
+（scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第四步（第三次
+应用）后工具结果判定解出，随后一轮返回纯文本收尾。
 
 前端验证：
 
