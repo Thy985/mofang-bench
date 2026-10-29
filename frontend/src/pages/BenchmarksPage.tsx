@@ -10,7 +10,7 @@ import type {
   BenchmarkSummary,
   CubeKind,
 } from '../api/types'
-import { shortId } from '../lib/format'
+import { formatDate, shortId } from '../lib/format'
 import { readInteger, readPositiveInt } from '../lib/validate'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
@@ -252,7 +252,8 @@ export function BenchmarksView({
                 <div className="font-medium">{benchmark.name}</div>
                 <div className="text-text-dim">
                   {benchmark.id} · {benchmark.cube} ·{' '}
-                  {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)}
+                  {benchmark.task_count} 题 · hash {shortId(benchmark.content_hash)} ·
+                  冻结 {formatDate(benchmark.frozen_at)}
                 </div>
               </div>
               <Link

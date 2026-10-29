@@ -128,6 +128,7 @@ export function ResultView({
             <tr>
               <Th>task</Th>
               <Th>状态</Th>
+              <Th>已解出</Th>
               <Th>步数</Th>
               <Th>参照</Th>
               <Th>效率</Th>
@@ -140,6 +141,7 @@ export function ResultView({
               <tr key={episode.id}>
                 <Td>{episode.task_key}</Td>
                 <Td>{statusLabel(episode.status)}</Td>
+                <Td>{episode.solved ? '✓' : '—'}</Td>
                 <Td>{episode.moves_used}</Td>
                 <Td>{episode.reference_length}</Td>
                 <Td>

@@ -1,6 +1,7 @@
 import { Link, useParams } from 'react-router-dom'
 import { useBenchmark } from '../api/queries'
 import { describeError } from '../lib/errors'
+import { formatDate } from '../lib/format'
 import type { BenchmarkDetail } from '../api/types'
 import { Alert } from '../ui/Alert'
 import { Skeleton } from '../ui/Skeleton'
@@ -16,7 +17,8 @@ export function BenchmarkDetailView({
       <h1 className="text-2xl font-semibold">{benchmark.name}</h1>
       <p className="text-sm text-text-dim">
         {benchmark.id} · {benchmark.cube} · {benchmark.tasks.length} 题 ·
-        hash {benchmark.content_hash}
+        hash {benchmark.content_hash} · 冻结{' '}
+        {formatDate(benchmark.frozen_at)}
       </p>
       <Table>
         <thead>

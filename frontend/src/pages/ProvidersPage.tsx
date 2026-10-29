@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { qk, useProviders } from '../api/queries'
 import { describeError, describeProbeError } from '../lib/errors'
+import { formatDate } from '../lib/format'
 import { readNumberInRange, readPositiveInt } from '../lib/validate'
 import type {
   ProbeResult,
@@ -284,7 +285,8 @@ export function ProvidersView({
                 {provider.model} · {provider.base_url}
               </div>
               <div className="text-slate-500">
-                环境变量：{provider.api_key_ref || '—'}
+                环境变量：{provider.api_key_ref || '—'} · 创建于{' '}
+                {formatDate(provider.created_at)}
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <span

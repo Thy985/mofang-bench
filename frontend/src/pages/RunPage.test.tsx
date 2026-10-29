@@ -225,6 +225,29 @@ describe('ResultView', () => {
     )
     expect(screen.getByTestId('run-result')).toHaveTextContent('100.0%')
   })
+
+  it('shows a solved column with check marks per episode', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={{
+            ...report,
+            episodes: [
+              ...report.episodes,
+              { ...report.episodes[0], id: 'e2', solved: false },
+            ],
+          }}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('columnheader', { name: '已解出' }))
+    const result = screen.getByTestId('run-result')
+    expect(result).toHaveTextContent('✓')
+    expect(result).toHaveTextContent('—')
+  })
 })
 
 function jsonResponse(body: unknown, status = 200) {

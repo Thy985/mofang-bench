@@ -295,6 +295,11 @@ describe('BenchmarksView', () => {
     ).toEqual(['/benchmarks/demo-2x2-3', '/benchmarks/odd%232x2-7'])
   })
 
+  it('shows the frozen time in the list row subtitle', () => {
+    renderView({ benchmarks: [summary] })
+    expect(screen.getByText(/冻结/)).toHaveTextContent('2026')
+  })
+
   it('opens the detail page through the router instead of a full reload', async () => {
     const user = userEvent.setup()
     render(
@@ -450,6 +455,15 @@ describe('BenchmarkDetailView', () => {
       '2x2-1-1',
     )
     expect(screen.getByText('exact')).toBeInTheDocument()
+  })
+
+  it('shows the frozen time in the detail subtitle', () => {
+    render(
+      <MemoryRouter>
+        <BenchmarkDetailView benchmark={detail} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/冻结/)).toHaveTextContent('2026')
   })
 
   it('links back and to a new run with the encoded benchmark id', () => {

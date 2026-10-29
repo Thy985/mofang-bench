@@ -112,6 +112,11 @@ describe('ProvidersView', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows the provider creation time on the card', () => {
+    renderView({ providers: [provider] })
+    expect(screen.getByText(/创建于/)).toHaveTextContent('2026')
+  })
+
   it('shows stored key state without echoing the key', () => {
     renderView({ providers: [{ ...provider, key_stored: true }] })
     expect(screen.getByTestId('key-configured')).toHaveTextContent(

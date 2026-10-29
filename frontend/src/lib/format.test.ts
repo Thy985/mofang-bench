@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   colorHex,
+  formatDate,
   formatDuration,
   formatPercent,
   formatTokens,
   shortId,
   statusLabel,
 } from './format'
+
+describe('formatDate', () => {
+  it('formats an ISO timestamp via toLocaleString', () => {
+    const iso = '2026-10-29T00:00:00+00:00'
+    expect(formatDate(iso)).toBe(new Date(iso).toLocaleString())
+  })
+})
 
 describe('format', () => {
   it('formats durations', () => {
