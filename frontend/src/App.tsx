@@ -1,28 +1,34 @@
+import { Suspense, lazy } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
-import BenchmarkDetailPage from './pages/BenchmarkDetailPage'
-import BenchmarksPage from './pages/BenchmarksPage'
-import EpisodePage from './pages/EpisodePage'
-import NewRunPage from './pages/NewRunPage'
-import ProvidersPage from './pages/ProvidersPage'
-import RunPage from './pages/RunPage'
-import RunsPage from './pages/RunsPage'
+import { Spinner } from './ui/Spinner'
+
+const BenchmarkDetailPage = lazy(() => import('./pages/BenchmarkDetailPage'))
+const BenchmarksPage = lazy(() => import('./pages/BenchmarksPage'))
+const EpisodePage = lazy(() => import('./pages/EpisodePage'))
+const NewRunPage = lazy(() => import('./pages/NewRunPage'))
+const ProvidersPage = lazy(() => import('./pages/ProvidersPage'))
+const RunPage = lazy(() => import('./pages/RunPage'))
+const RunsPage = lazy(() => import('./pages/RunsPage'))
 
 export default function App() {
+  const suspense = (node: React.ReactNode) => (
+    <Suspense fallback={<Spinner className="mx-auto mt-8" />}>{node}</Suspense>
+  )
   return (
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Navigate to="/runs" replace />} />
-        <Route path="providers" element={<ProvidersPage />} />
-        <Route path="benchmarks" element={<BenchmarksPage />} />
+        <Route path="providers" element={suspense(<ProvidersPage />)} />
+        <Route path="benchmarks" element={suspense(<BenchmarksPage />)} />
         <Route
           path="benchmarks/:id"
-          element={<BenchmarkDetailPage />}
+          element={suspense(<BenchmarkDetailPage />)}
         />
-        <Route path="runs" element={<RunsPage />} />
-        <Route path="runs/new" element={<NewRunPage />} />
-        <Route path="runs/:id" element={<RunPage />} />
-        <Route path="episodes/:id" element={<EpisodePage />} />
+        <Route path="runs" element={suspense(<RunsPage />)} />
+        <Route path="runs/new" element={suspense(<NewRunPage />)} />
+        <Route path="runs/:id" element={suspense(<RunPage />)} />
+        <Route path="episodes/:id" element={suspense(<EpisodePage />)} />
       </Route>
     </Routes>
   )

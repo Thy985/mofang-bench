@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 
-// 路由表静态导入 RunPage → CubeView → three；jsdom 用不到 WebGL。
+// 路由 lazy 导入 RunPage → CubeView → three；vi.mock 对动态导入同样生效，jsdom 用不到 WebGL。
 vi.mock('./cube/CubeView', () => ({
   CubeView: () => <div data-testid="cube-stub" />,
 }))
@@ -27,7 +27,7 @@ afterEach(() => {
 })
 
 describe('App routes', () => {
-  it('renders the providers page and navigation', () => {
+  it('renders the providers page and navigation', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -39,11 +39,11 @@ describe('App routes', () => {
       </QueryClientProvider>,
     )
     expect(
-      screen.getByRole('heading', { name: 'Providers' }),
+      await screen.findByRole('heading', { name: 'Providers' }),
     ).toBeInTheDocument()
     // 占位组件只有标题；断言表单按钮才能证明接的是真实页面
     expect(
-      screen.getByRole('button', { name: '保存 provider' }),
+      await screen.findByRole('button', { name: '保存 provider' }),
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument()
   })
