@@ -1,32 +1,26 @@
-# React + TypeScript + Vite
+# mofang Web 工作台
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+mofang 的 M3 前端：用 React + Vite 展示 Provider、题集、实时 3D 运行与
+Episode 回放，数据来自本地 FastAPI（`uv run mofang serve`）。
 
-Currently, two official plugins are available:
+## 开发
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Vite 在 `http://127.0.0.1:5173` 启动，`/api` 代理到 `http://127.0.0.1:8000`。
+
+## 构建与验证
+
+```bash
+npm run build
+npm run typecheck
+npm run test:run
+npx playwright install chromium   # 首次运行 E2E 前
+npm run e2e
+```
+
+E2E 会拉起三个进程：mock OpenAI（20129）、API（8000）、Vite（5173），
+需先确保这些端口空闲。完整项目文档见 [`../README.md`](../README.md)。

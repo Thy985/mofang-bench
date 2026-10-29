@@ -7806,7 +7806,7 @@ uv run mofang serve
 
 打开 `http://127.0.0.1:8000`（FastAPI 托管 `frontend/dist`）。
 
-只用 API、不托管前端时：`uv run mofang serve --web-dir ""`（或 `MOFANG_WEB_DIR=`）。
+只用 API、不托管前端时：`uv run mofang serve --web-dir ""`。
 
 无真实模型时可用 mock：
 
@@ -7817,8 +7817,8 @@ uv run mofang serve
 ```
 
 Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
-（scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第四步（第三次
-应用）后工具结果判定解出，随后一轮返回纯文本收尾。
+（scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第三次应用后工具结果
+判定解出（`R'` 的阶为 4）。
 
 前端验证：
 
@@ -7885,10 +7885,10 @@ git commit -m "docs: M3 工作台运行说明与验证记录"
 以 1 个失败套件退出：Vitest 默认收集了 `frontend/e2e/workbench.spec.ts`，Playwright
 的 `test()` 在 Vitest 下抛错；`frontend/vitest.config.ts` 需加
 `exclude: [...configDefaults.exclude, 'e2e/**']`，排除后 156 passed、退出码 0。
-`scripts/fake_openai_server.py` 按末条消息返回：不是工具结果时返回
-`apply_moves ["R'"]`，是工具结果时返回纯文本 `solved`。seed 3、depth 1、2x2 题的
-scramble 为 `R'`，episode 遇到纯文本会暂停并再次催促，故 `apply_moves ["R'"]` 共
-应用 3 次；`R'` 四次复原，scramble `R'` 再加 3 次即恒等，第三次工具结果后立即解出。
+`scripts/fake_openai_server.py` 的 `solved` 纯文本分支只在末条消息为工具结果时
+可达；但 `ContextBuilder.build` 总会在末尾追加一条 `state_text` 用户消息，因此
+应用路径每轮都走 `apply_moves ["R'"]` 分支。seed 3、depth 1、2x2 题的 scramble
+为 `R'`，`R'` 的阶为 4，第三次应用后工具结果即判定解出。
 
 ---
 

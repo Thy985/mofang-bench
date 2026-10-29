@@ -1,6 +1,6 @@
 # PROJECT-PASSPORT — mofang
 
-- 项目：魔方模型能力测试台（后端 + 本地 API）
+- 项目：魔方模型能力测试台（后端 + 本地 API + Web 工作台）
 - 目录：`D:\Projects\Archive\mofang`
 - 更新：2026-10-29
 - 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做
@@ -81,7 +81,8 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - M2：FastAPI `127.0.0.1:8000`（`uv run mofang serve`）；DB 默认 `data/mofang.db`。
 - M3 开发：Vite `127.0.0.1:5173`（CORS 仅放行 `127.0.0.1:5173` 与 `localhost:5173`）。
 - M3 单端口演示：先 `npm run build`，再由 FastAPI `127.0.0.1:8000` 托管 `frontend/dist`；
-  `--web-dir ""`（或 `MOFANG_WEB_DIR=`）可关闭托管，只留 API。
+  `--web-dir ""` 可关闭托管，只留 API；`MOFANG_WEB_DIR` 仅对 `Settings.from_env()`
+  生效，`mofang serve` 不使用它。
 - E2E mock OpenAI：`127.0.0.1:20129`（`scripts/fake_openai_server.py`）。
 
 ## 模型接入
@@ -91,7 +92,7 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - 网关兼容性：普通 JSON 可能附加 `data: [DONE]`；部分后端必须显式 `stream:false`（adapter 已固定发送，`probe_tools` 亦然——否则网关返回 SSE 分片导致 probe 报 `bad_response`）；`sensenova/kimi-k3` 只接受 temperature=1；`agnes1/agnes-2.5-pro` 需实名认证。
 - 真实冒烟（2026-10-26，`ollama/gpt-oss:120b`，2x2 depth 1）：CLI 链路与工具调用正常，模型未解出（0/1，10 步预算耗尽）。报告在 `data/reports/real-smoke-gptoss.json`（gitignored）。
 - M2 API 冒烟（2026-10-26）：`mofang serve` + provider/probe + benchmark + run + SSE 全链路通过；事件 `run.started → … → tool.call/tool.result/move.applied → episode.finished → run.finished`，报告与 CSV/MD 导出可读。该次 run 使用 6 步预算，模型同样未解出（`budget_exceeded`，0/1）。
-- M3 Web 冒烟（2026-10-29，`ollama/gpt-oss:120b`，2x2 depth 1，6 步 / 120 秒）：UI 全链路通过——新建 provider + probe（支持 tool calling）→ 生成题集 → New Run → 实时 canvas 与工具日志 → 结果页 → CSV/MD/JSON 导出可读 → Episode 回放 10 步；模型未解出，run 正常以 `budget_exceeded` 结束（0/1），无浏览器控制台错误。冒烟使用独立临时 DB（已删除），截图与摘要留在 `frontend/test-results/smoke/`（gitignored）。
+- M3 Web 冒烟（2026-10-29，`ollama/gpt-oss:120b`，2x2 depth 1，预算 6 步（最长秒数 120））：UI 全链路通过——新建 provider + probe（支持 tool calling）→ 生成题集 → New Run → 实时 canvas 与工具日志 → 结果页 → CSV/MD/JSON 导出可读 → Episode 回放含 10 条步骤记录；模型未解出，run 正常以 `budget_exceeded` 结束（0/1），无浏览器控制台错误。冒烟使用独立临时 DB（已删除），截图与摘要留在 `frontend/test-results/smoke/`（gitignored）。
 - 温度默认 0，但 provider 的 `params` 与 run 的 `params` 都可覆盖 `temperature` / `max_tokens` / `extra`。
 
 ## GPL 边界

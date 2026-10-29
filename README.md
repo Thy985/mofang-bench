@@ -1,6 +1,6 @@
 # mofang
 
-用魔方还原局面测试模型能力的本地工作台（后端核心 + CLI）。
+用魔方还原局面测试模型能力的本地工作台（后端 + CLI + Web 工作台）。
 
 ## 快速开始
 
@@ -115,7 +115,7 @@ uv run mofang serve
 
 打开 `http://127.0.0.1:8000`（FastAPI 托管 `frontend/dist`）。
 
-只用 API、不托管前端时：`uv run mofang serve --web-dir ""`（或 `MOFANG_WEB_DIR=`）。
+只用 API、不托管前端时：`uv run mofang serve --web-dir ""`。
 
 无真实模型时可用 mock：
 
@@ -126,8 +126,8 @@ uv run mofang serve
 ```
 
 Provider 填 `http://127.0.0.1:20129/v1`；生成 2x2、depth 1、seed 3 题集
-（scramble 为 `R'`）。mock 交替返回 `apply_moves ["R'"]` 与纯文本 `solved`；
-每题 3 次应用后解出（`R'` 四次复原）。
+（scramble 为 `R'`）。mock 每轮返回 `apply_moves ["R'"]`，第三次应用后工具结果
+判定解出（`R'` 的阶为 4）。
 
 前端验证：
 
