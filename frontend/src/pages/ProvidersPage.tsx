@@ -268,7 +268,7 @@ export function ProvidersView({
       ) : providers.length === 0 ? (
         // 加载失败时只留错误横幅，不再叠一句“还没有 provider”的引导文案
         error ? null : (
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-text-dim">
             还没有 provider。可在上方直接保存 API key，或用环境变量名回退。
           </p>
         )
@@ -281,10 +281,10 @@ export function ProvidersView({
               className="space-y-2 rounded border border-line bg-surface p-4 text-sm"
             >
               <div className="text-base font-medium">{provider.name}</div>
-              <div className="text-slate-400">
+              <div className="text-text-dim">
                 {provider.model} · {provider.base_url}
               </div>
-              <div className="text-slate-500">
+              <div className="text-text-dim">
                 环境变量：{provider.api_key_ref || '—'} · 创建于{' '}
                 {formatDate(provider.created_at)}
               </div>
@@ -292,9 +292,7 @@ export function ProvidersView({
                 <span
                   data-testid="key-configured"
                   className={
-                    provider.key_configured
-                      ? 'text-emerald-400'
-                      : 'text-amber-400'
+                    provider.key_configured ? 'text-accent' : 'text-warning'
                   }
                 >
                   {provider.key_stored
@@ -310,7 +308,7 @@ export function ProvidersView({
                   探测
                 </Button>
                 {probes[provider.id] && (
-                  <span className="flex items-center gap-2 text-slate-300">
+                  <span className="flex items-center gap-2 text-text">
                     {probes[provider.id].kind && (
                       <span
                         data-testid="probe-kind"
@@ -326,7 +324,7 @@ export function ProvidersView({
                 )}
               </div>
               <details className="text-sm">
-                <summary className="cursor-pointer text-slate-400">
+                <summary className="cursor-pointer text-text-dim">
                   设置/更换 key
                 </summary>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
