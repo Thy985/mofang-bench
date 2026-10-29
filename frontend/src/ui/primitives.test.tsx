@@ -4,6 +4,10 @@ import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
 import { Textarea } from './Textarea'
+import { Alert } from './Alert'
+import { Skeleton } from './Skeleton'
+import { Spinner } from './Spinner'
+import { Table, Td, Th } from './Table'
 
 describe('Button', () => {
   it.each([
@@ -64,5 +68,56 @@ describe('Card', () => {
     expect(card).toHaveClass('p-4')
     expect(card).not.toHaveClass('p-3')
     expect(card).toHaveTextContent('内容')
+  })
+})
+
+describe('Alert', () => {
+  it('renders role=alert with danger tone by default', () => {
+    render(<Alert>boom</Alert>)
+    const alert = screen.getByRole('alert')
+    expect(alert).toHaveTextContent('boom')
+    expect(alert).toHaveClass('border-danger', 'text-rose-300')
+  })
+
+  it('renders info tone', () => {
+    render(<Alert tone="info">note</Alert>)
+    expect(screen.getByRole('alert')).toHaveClass('border-line', 'bg-surface')
+  })
+})
+
+describe('Table', () => {
+  it('renders th/td with converged styles', () => {
+    render(
+      <Table>
+        <thead>
+          <tr>
+            <Th>列</Th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <Td>值</Td>
+          </tr>
+        </tbody>
+      </Table>,
+    )
+    expect(screen.getByRole('columnheader', { name: '列' })).toHaveClass(
+      'text-text-dim',
+      'border-line',
+    )
+    expect(screen.getByRole('cell', { name: '值' })).toHaveClass('border-line/50')
+  })
+})
+
+describe('Skeleton / Spinner', () => {
+  it('renders pulse skeleton and spinning status', () => {
+    render(
+      <>
+        <Skeleton className="h-4 w-full" />
+        <Spinner />
+      </>,
+    )
+    expect(screen.getByTestId('skeleton')).toHaveClass('animate-pulse')
+    expect(screen.getByRole('status')).toHaveAttribute('aria-label', '加载中')
   })
 })
