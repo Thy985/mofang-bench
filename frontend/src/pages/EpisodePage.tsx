@@ -9,6 +9,7 @@ import type {
 import { StatusBadge } from '../components/StatusBadge'
 import { CubeView } from '../cube/CubeView'
 import type { MoveBatch } from '../cube/CubeView'
+import { FaceLegend } from '../cube/FaceLegend'
 import { describeError } from '../lib/errors'
 import {
   formatDuration,
@@ -239,14 +240,17 @@ export default function EpisodePage() {
       onSelect={select}
       onPlayBatch={playBatch}
       cube={
-        <CubeView
-          state={state}
-          resetToken={resetToken}
-          batch={batch}
-          speed={1}
-          paused={false}
-          skipToken={0}
-        />
+        <div className="relative">
+          <CubeView
+            state={state}
+            resetToken={resetToken}
+            batch={batch}
+            speed={1}
+            paused={false}
+            skipToken={0}
+          />
+          <FaceLegend />
+        </div>
       }
     />
   )

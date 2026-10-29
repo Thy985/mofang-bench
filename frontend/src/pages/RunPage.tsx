@@ -20,6 +20,7 @@ import { ResultView } from '../components/ResultView'
 import { StatusBadge } from '../components/StatusBadge'
 import { ToolLog } from '../components/ToolLog'
 import { CubeView } from '../cube/CubeView'
+import { FaceLegend } from '../cube/FaceLegend'
 import { useRunEvents } from '../hooks/useRunEvents'
 import type { LiveState } from '../hooks/liveReducer'
 import { describeError } from '../lib/errors'
@@ -289,7 +290,7 @@ export default function RunPage() {
       )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="space-y-3">
+        <div className="relative space-y-3">
           <CubeView
             state={cubeReset.state}
             resetToken={cubeReset.token}
@@ -298,6 +299,7 @@ export default function RunPage() {
             paused={paused}
             skipToken={skipToken}
           />
+          <FaceLegend />
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="flex items-center gap-2">
               <span className="text-text-dim">速度</span>
