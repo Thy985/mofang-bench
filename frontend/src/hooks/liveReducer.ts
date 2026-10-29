@@ -279,6 +279,7 @@ export function liveReducer(
               item.id === current.id ? current : item,
             )
           : state.episodes,
+        thinking: false,
       }
     }
     case 'run.finished':

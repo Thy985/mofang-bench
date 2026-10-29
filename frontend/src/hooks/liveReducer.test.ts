@@ -337,6 +337,23 @@ describe('liveReducer', () => {
     expect(state.thinking).toBe(false)
   })
 
+  it('clears thinking on episode.finished', () => {
+    let state = apply(stateAfterSnapshot(), {
+      type: 'event',
+      event: event('model.turn.started', { moves_used: 0 }, 1),
+    })
+    expect(state.thinking).toBe(true)
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'episode.finished',
+        { task_id: 'b1:t1', status: 'solved', solved: true, moves_used: 1 },
+        2,
+      ),
+    })
+    expect(state.thinking).toBe(false)
+  })
+
   it('clears thinking on run.finished and run.error', () => {
     let state = apply(stateAfterSnapshot(), {
       type: 'event',

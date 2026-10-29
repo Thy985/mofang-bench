@@ -244,4 +244,35 @@ describe('useRunEvents', () => {
       completion_tokens: 2,
     })
   })
+
+  it('serializes two manual retries that share one in-flight snapshot', async () => {
+    const snapshotSpy = vi.mocked(api.runs.snapshot)
+    const { result } = renderHook(() => useRunEvents('r1'))
+    await waitFor(() => expect(result.current.run?.id).toBe('r1'))
+    const first = FakeEventSource.instances[0]
+    act(() => {
+      first.onopen?.()
+    })
+
+    let resolveShared!: (value: Snapshot) => void
+    const shared = new Promise<Snapshot>((resolve) => {
+      resolveShared = resolve
+    })
+    snapshotSpy.mockReturnValue(shared)
+
+    act(() => {
+      result.current.retry()
+      result.current.retry()
+    })
+    await act(async () => {
+      resolveShared({ ...snapshot, last_event_id: 4 })
+      await shared
+    })
+
+    expect(FakeEventSource.instances).toHaveLength(2)
+    expect(first.closed).toBe(true)
+    expect(
+      FakeEventSource.instances[1].url.endsWith('after=4'),
+    ).toBe(true)
+  })
 })

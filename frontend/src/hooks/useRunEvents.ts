@@ -42,6 +42,8 @@ export function useRunEvents(runId: string): RunEventsState {
   useEffect(() => {
     // 每个 effect 实例独立的存活标记：runId 切换时旧 snapshot 的迟到响应必须作废。
     let alive = true
+    // 连接代际：并发的 connect（手动重试 / 自动重连）只有最新一代能走到收尾。
+    let generation = 0
     // reset 只取决于“本 run 是否已有一份 snapshot 落地”，与第几次连接无关。
     let snapshotLanded = false
     let timer: number | undefined
@@ -49,6 +51,7 @@ export function useRunEvents(runId: string): RunEventsState {
     retryRef.current = 0
 
     async function connect(initial: boolean) {
+      const gen = ++generation
       // 重新连接前先清掉待执行的退避定时器，避免手动重试后又叠加一条自动重连。
       if (timer !== undefined) {
         window.clearTimeout(timer)
@@ -68,13 +71,16 @@ export function useRunEvents(runId: string): RunEventsState {
       try {
         snapshot = await api.runs.snapshot(runId)
       } catch {
-        if (!alive) return
+        if (!alive || gen !== generation) return
         dispatch({ type: 'connection', connection: 'reconnecting' })
         const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
-        timer = window.setTimeout(() => void connect(false), delay)
+        timer = window.setTimeout(() => {
+          timer = undefined
+          void connect(false)
+        }, delay)
         return
       }
-      if (!alive) return
+      if (!alive || gen !== generation) return
       dispatch({
         type: 'snapshot',
         run: snapshot.run,
@@ -96,13 +102,25 @@ export function useRunEvents(runId: string): RunEventsState {
         snapshot.last_event_id,
         lastEventIdRef.current,
       )
+      // 兜底：不应存在残留连接，若存在（例如旧实现的孤儿流）先关掉再挂新的。
+      const stale = sourceRef.current
+      if (stale) {
+        stale.onerror = null
+        stale.close()
+        sourceRef.current = null
+      }
       const source = new EventSource(api.runs.eventsUrl(runId, after))
       sourceRef.current = source
       source.onopen = () => {
+        if (!alive || gen !== generation) return
         retryRef.current = 0
         dispatch({ type: 'connection', connection: 'open' })
       }
       const handle = (raw: Event) => {
+        if (!alive || gen !== generation) {
+          source.close()
+          return
+        }
         const message = raw as MessageEvent
         let event: RunEvent
         try {
@@ -120,10 +138,13 @@ export function useRunEvents(runId: string): RunEventsState {
       }
       source.onerror = () => {
         source.close()
-        if (!alive) return
+        if (!alive || gen !== generation) return
         dispatch({ type: 'connection', connection: 'reconnecting' })
         const delay = Math.min(10_000, 1_000 * 2 ** retryRef.current++)
-        timer = window.setTimeout(() => void connect(false), delay)
+        timer = window.setTimeout(() => {
+          timer = undefined
+          void connect(false)
+        }, delay)
       }
     }
 

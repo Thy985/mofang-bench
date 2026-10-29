@@ -174,3 +174,19 @@ async def test_connect_error_raises_retryable_transport_error(
     assert exc.value.retryable is True
     assert route.call_count == 4
 
+
+@respx.mock
+async def test_read_timeout_still_reports_timeout_kind(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        side_effect=httpx.ReadTimeout("slow")
+    )
+    with pytest.raises(ProviderError) as exc:
+        await adapter.chat(
+            [{"role": "user", "content": "go"}], [], ModelParams()
+        )
+    assert exc.value.kind == "timeout"
+    assert exc.value.retryable is True
+    assert route.call_count == 4
+
