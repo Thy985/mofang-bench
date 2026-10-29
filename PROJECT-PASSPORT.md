@@ -114,3 +114,5 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - 同一 run 内 episode 串行；跨 run 由 `RunService` 的锁串行，长跑会排队。
 - 保存的 API key 为本地 SQLite 明文；拿到 `data/mofang.db` 即可读取，靠文件系统与账户权限保护。
 - `mofang dev` 首版不重启后端热重载：改 Python 代码需重启命令；Vite 前端保留 HMR。
+- 前端构建产物已按路由拆分：首屏约 289KB（gzip 91KB）；three.js 相关（FaceLegend）
+  单独成约 934KB 的 chunk（gzip 249KB），进入 3D 页面时按需加载，不在首屏。

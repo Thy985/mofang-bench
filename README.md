@@ -101,6 +101,11 @@ uv run mofang dev
 环境变量名回退）→ Probe → Benchmarks 生成题集 → New Run → 实时 3D →
 结果与导出 → Episode 回放。
 
+样式经 `frontend/src/ui` 原语与 `index.css` 的 `@theme` 语义色 token 收敛（正文只用
+`text-text` / `text-text-dim` / `text-accent` 等 token，状态语义色集中在
+StatusBadge/Alert 等原语内部）；路由均为 lazy 加载，three.js（FaceLegend）单独成
+chunk，首屏约 289KB（gzip 91KB），3D 相关约 934KB 仅在需要时按需加载。
+
 `mofang dev` 同时管理 API 与 Vite，Ctrl+C 会一并停止，不遗留后端进程。
 
 单端口演示：
