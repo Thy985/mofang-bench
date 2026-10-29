@@ -120,4 +120,11 @@ describe('Skeleton / Spinner', () => {
     expect(screen.getByTestId('skeleton')).toHaveClass('animate-pulse')
     expect(screen.getByRole('status')).toHaveAttribute('aria-label', '加载中')
   })
+
+  it('passes through rest props such as aria-hidden while keeping role=status', () => {
+    render(<Spinner aria-hidden data-testid="busy" />)
+    const spinner = screen.getByTestId('busy')
+    expect(spinner).toHaveAttribute('aria-hidden', 'true')
+    expect(spinner).toHaveAttribute('role', 'status')
+  })
 })

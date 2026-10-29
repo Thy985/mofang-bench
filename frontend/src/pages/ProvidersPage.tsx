@@ -245,7 +245,7 @@ export function ProvidersView({
         </label>
         <div className="flex items-center gap-3 md:col-span-2">
           <Button variant="primary" type="submit" disabled={submitting}>
-            {submitting && <Spinner className="mr-2 border-slate-400 border-t-white" />}
+            {submitting && <Spinner aria-hidden className="mr-2 border-text-dim border-t-white" />}
             保存 provider
           </Button>
           {formError && (

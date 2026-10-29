@@ -212,7 +212,7 @@ export function BenchmarksView({
             disabled={submitting}
           >
             {submitting && (
-              <Spinner className="mr-2 border-slate-400 border-t-white" />
+              <Spinner aria-hidden className="mr-2 border-text-dim border-t-white" />
             )}
             生成基准集
           </Button>
