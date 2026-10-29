@@ -9,6 +9,12 @@ import type {
   Provider,
   ProviderCreate,
 } from '../api/types'
+import { Alert } from '../ui/Alert'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
+import { Skeleton } from '../ui/Skeleton'
+import { Spinner } from '../ui/Spinner'
+import { Textarea } from '../ui/Textarea'
 
 const initialForm = {
   name: '',
@@ -159,22 +165,14 @@ export function ProvidersView({
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Providers</h1>
-      {error && (
-        <p
-          role="alert"
-          className="rounded border border-rose-700 bg-rose-950/40 p-3 text-sm text-rose-300"
-        >
-          {error}
-        </p>
-      )}
+      {error && <Alert tone="danger">{error}</Alert>}
       <form
         onSubmit={handleSubmit}
-        className="grid gap-3 rounded border border-slate-800 bg-slate-900 p-4 md:grid-cols-2"
+        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
         <label className="grid gap-1 text-sm">
           <span>名称</span>
-          <input
-            className="rounded bg-slate-950 px-3 py-2"
+          <Input
             value={form.name}
             onChange={(event) => update('name', event.target.value)}
             required
@@ -182,8 +180,7 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm">
           <span>模型</span>
-          <input
-            className="rounded bg-slate-950 px-3 py-2"
+          <Input
             value={form.model}
             onChange={(event) => update('model', event.target.value)}
             required
@@ -191,8 +188,7 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm md:col-span-2">
           <span>base_url</span>
-          <input
-            className="rounded bg-slate-950 px-3 py-2"
+          <Input
             value={form.base_url}
             onChange={(event) => update('base_url', event.target.value)}
             required
@@ -200,18 +196,16 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm">
           <span>API key（可选，保存后不回显）</span>
-          <input
+          <Input
             type="password"
             autoComplete="off"
-            className="rounded bg-slate-950 px-3 py-2"
             value={form.api_key}
             onChange={(event) => update('api_key', event.target.value)}
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>API key 环境变量</span>
-          <input
-            className="rounded bg-slate-950 px-3 py-2"
+          <Input
             value={form.api_key_ref}
             onChange={(event) =>
               update('api_key_ref', event.target.value)
@@ -221,10 +215,9 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm">
           <span>temperature</span>
-          <input
+          <Input
             type="number"
             step="0.1"
-            className="rounded bg-slate-950 px-3 py-2"
             value={form.temperature}
             onChange={(event) =>
               update('temperature', event.target.value)
@@ -233,9 +226,8 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm">
           <span>max_tokens</span>
-          <input
+          <Input
             type="number"
-            className="rounded bg-slate-950 px-3 py-2"
             value={form.max_tokens}
             onChange={(event) =>
               update('max_tokens', event.target.value)
@@ -244,21 +236,18 @@ export function ProvidersView({
         </label>
         <label className="grid gap-1 text-sm md:col-span-2">
           <span>extra JSON</span>
-          <textarea
-            className="rounded bg-slate-950 px-3 py-2 font-mono text-xs"
+          <Textarea
+            className="font-mono text-xs"
             rows={2}
             value={form.extra}
             onChange={(event) => update('extra', event.target.value)}
           />
         </label>
         <div className="flex items-center gap-3 md:col-span-2">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded bg-emerald-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
+          <Button variant="primary" type="submit" disabled={submitting}>
+            {submitting && <Spinner className="mr-2 border-slate-400 border-t-white" />}
             保存 provider
-          </button>
+          </Button>
           {formError && (
             <p role="alert" className="text-sm text-rose-300">
               {formError}
@@ -268,7 +257,11 @@ export function ProvidersView({
       </form>
 
       {loading ? (
-        <p className="text-sm text-slate-400">加载中…</p>
+        <div aria-busy="true" className="space-y-2">
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+        </div>
       ) : providers.length === 0 ? (
         // 加载失败时只留错误横幅，不再叠一句“还没有 provider”的引导文案
         error ? null : (
@@ -282,7 +275,7 @@ export function ProvidersView({
             <li
               key={provider.id}
               data-testid="provider-card"
-              className="space-y-2 rounded border border-slate-800 bg-slate-900 p-4 text-sm"
+              className="space-y-2 rounded border border-line bg-surface p-4 text-sm"
             >
               <div className="text-base font-medium">{provider.name}</div>
               <div className="text-slate-400">
@@ -306,13 +299,12 @@ export function ProvidersView({
                       ? 'key 来自环境变量'
                       : 'key 未配置'}
                 </span>
-                <button
+                <Button
                   type="button"
                   onClick={() => void handleProbe(provider.id)}
-                  className="rounded border border-slate-700 px-3 py-1"
                 >
                   探测
-                </button>
+                </Button>
                 {probes[provider.id] && (
                   <span className="text-slate-300">{probes[provider.id]}</span>
                 )}
@@ -322,11 +314,10 @@ export function ProvidersView({
                   设置/更换 key
                 </summary>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <input
+                  <Input
                     type="password"
                     autoComplete="off"
                     aria-label={`新 API key（${provider.name}）`}
-                    className="rounded bg-slate-950 px-2 py-1"
                     value={keyDrafts[provider.id] ?? ''}
                     onChange={(event) =>
                       setKeyDrafts((current) => ({
@@ -335,21 +326,20 @@ export function ProvidersView({
                       }))
                     }
                   />
-                  <button
+                  <Button
                     type="button"
                     onClick={() => void handleSetKey(provider.id)}
-                    className="rounded border border-slate-700 px-3 py-1"
                   >
                     保存 key
-                  </button>
+                  </Button>
                   {provider.key_stored && (
-                    <button
+                    <Button
                       type="button"
                       onClick={() => void handleClearKey(provider.id)}
-                      className="rounded border border-rose-700 px-3 py-1 text-rose-300"
+                      variant="danger"
                     >
                       清除 key
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {keyErrors[provider.id] && (
