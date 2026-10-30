@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -50,12 +50,15 @@ class OpenAICompatibleAdapter:
         client: httpx.AsyncClient | None = None,
         retry_delay: float = 1.0,
         timeout: float = DEFAULT_TIMEOUT,
+        stream: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.retry_delay = retry_delay
         self.timeout = timeout
+        self.stream = stream
+        self.downgraded = False
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0)
         )
@@ -76,19 +79,182 @@ class OpenAICompatibleAdapter:
         tools: list[dict[str, Any]],
         params: ModelParams,
     ) -> ModelTurn:
+        payload = self._build_payload(messages, tools, params, stream=False)
+        response = await self._post(payload)
+        return self._parse(response)
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        params: ModelParams,
+        on_delta: Callable[[str, str], None] | None = None,
+    ) -> ModelTurn:
+        if not self.stream:
+            return await self.chat(messages, tools, params)
+        payload = self._build_payload(messages, tools, params, stream=True)
+        response = await self._open_stream(payload)
+        if response is None:
+            self.downgraded = True
+            return await self.chat(messages, tools, params)
+        try:
+            return await self._consume_stream(response, on_delta)
+        except httpx.TransportError as exc:
+            # 流中断不重试：重试会整 turn 重放并双计 usage。
+            raise ProviderError("transport", str(exc)) from exc
+        finally:
+            await response.aclose()
+
+    def _build_payload(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        params: ModelParams,
+        *,
+        stream: bool,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": params.temperature,
             "max_tokens": params.max_tokens,
-            "stream": False,
+            "stream": stream,
         }
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         payload.update(params.extra)
-        response = await self._post(payload)
-        return self._parse(response)
+        if payload.get("stream"):
+            payload["stream_options"] = {"include_usage": True}
+        return payload
+
+    async def _open_stream(
+        self, payload: dict[str, Any]
+    ) -> httpx.Response | None:
+        """打开流式响应；返回 None 表示网关不支持流式（应降级）。"""
+        last_error: str | None = None
+        for attempt in range(4):
+            try:
+                response = await self._client.send(
+                    self._client.build_request(
+                        "POST",
+                        f"{self.base_url}/chat/completions",
+                        json=payload,
+                        headers=self._headers,
+                    ),
+                    stream=True,
+                )
+            except httpx.TransportError as exc:
+                last_error = str(exc) or f"request timed out after {self.timeout:g}s"
+                if attempt < 3:
+                    await asyncio.sleep(self.retry_delay * (2**attempt))
+                    continue
+                kind = (
+                    "timeout"
+                    if isinstance(exc, httpx.TimeoutException)
+                    else "transport"
+                )
+                raise ProviderError(kind, last_error, retryable=True) from exc
+            if response.status_code == 429 or response.status_code >= 500:
+                last_error = (await response.aread()).decode(errors="replace")
+                await response.aclose()
+                if attempt < 3:
+                    await asyncio.sleep(self.retry_delay * (2**attempt))
+                    continue
+                kind = "rate_limit" if response.status_code == 429 else "server"
+                raise ProviderError(kind, last_error, retryable=True)
+            if response.status_code in (401, 403):
+                body = (await response.aread()).decode(errors="replace")
+                await response.aclose()
+                raise ProviderError("auth", body)
+            if response.status_code >= 400:
+                body = (await response.aread()).decode(errors="replace")
+                await response.aclose()
+                if "stream" in body.lower():
+                    return None
+                raise ProviderError("bad_request", body)
+            return response
+        raise ProviderError("server", last_error or "request failed", retryable=True)
+
+    async def _consume_stream(
+        self,
+        response: httpx.Response,
+        on_delta: Callable[[str, str], None] | None,
+    ) -> ModelTurn:
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        slots: dict[int, dict[str, str]] = {}
+        usage = Usage()
+        finish_reason: str | None = None
+        async for line in response.aiter_lines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            raw_usage = chunk.get("usage")
+            if raw_usage:
+                usage = Usage(
+                    prompt_tokens=int(raw_usage.get("prompt_tokens") or 0),
+                    completion_tokens=int(raw_usage.get("completion_tokens") or 0),
+                )
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta") or {}
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+            if reasoning:
+                reasoning_parts.append(reasoning)
+                if on_delta is not None:
+                    on_delta("thinking", reasoning)
+            content = delta.get("content")
+            if content:
+                content_parts.append(content)
+                if on_delta is not None:
+                    on_delta("content", content)
+            for raw in delta.get("tool_calls") or []:
+                slot = slots.setdefault(
+                    raw.get("index", 0), {"id": "", "name": "", "arguments": ""}
+                )
+                slot["id"] = raw.get("id") or slot["id"]
+                function = raw.get("function") or {}
+                slot["name"] = function.get("name") or slot["name"]
+                slot["arguments"] += function.get("arguments") or ""
+        content, think = split_think("".join(content_parts) or None)
+        reasoning_text = "".join(reasoning_parts) or None
+        if think:
+            reasoning_text = f"{reasoning_text}\n{think}" if reasoning_text else think
+        calls: list[ToolCall] = []
+        for index in sorted(slots):
+            slot = slots[index]
+            raw_arguments = slot["arguments"]
+            try:
+                arguments = json.loads(raw_arguments) if raw_arguments else {}
+            except json.JSONDecodeError:
+                arguments = None
+            calls.append(
+                ToolCall(
+                    id=slot["id"] or f"call-{index}",
+                    name=slot["name"],
+                    arguments=arguments,
+                    raw_arguments=raw_arguments,
+                )
+            )
+        return ModelTurn(
+            content=content,
+            reasoning=reasoning_text,
+            tool_calls=calls,
+            usage=usage,
+            finish_reason=finish_reason,
+        )
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: str | None = None
