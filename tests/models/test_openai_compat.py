@@ -451,3 +451,35 @@ async def test_stream_interrupted_raises_non_retryable() -> None:
     finally:
         await client.aclose()
 
+
+async def test_extra_stream_options_override_default() -> None:
+    received: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=_sse(
+                {"choices": [{"delta": {"content": "ok"}}]},
+                {"choices": [], "usage": USAGE},
+            ),
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = OpenAICompatibleAdapter(
+        base_url=BASE,
+        api_key="secret",
+        model="test-model",
+        client=client,
+    )
+    try:
+        turn = await adapter.chat_stream(
+            [{"role": "user", "content": "go"}],
+            [],
+            ModelParams(extra={"stream_options": {"include_usage": False}}),
+        )
+    finally:
+        await client.aclose()
+    assert received[0]["stream_options"] == {"include_usage": False}
+    assert turn.content == "ok"
+

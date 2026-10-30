@@ -123,9 +123,10 @@ class OpenAICompatibleAdapter:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        payload.update(params.extra)
-        if payload.get("stream"):
+        if stream:
+            # 先写默认值再让 extra 覆盖，保证 params.extra 优先。
             payload["stream_options"] = {"include_usage": True}
+        payload.update(params.extra)
         return payload
 
     async def _open_stream(
