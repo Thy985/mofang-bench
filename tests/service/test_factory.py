@@ -78,6 +78,37 @@ def test_build_adapter_uses_key_and_params(tmp_path: Path) -> None:
     assert model_params_for(record, {"temperature": 1.0}).temperature == 1.0
 
 
+def test_build_adapter_stream_default_on(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    record = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+    )
+    adapter = build_adapter(record, env={"KEY": "k"})
+    assert adapter.stream is True
+
+
+def test_build_adapter_stream_off_from_params(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    record = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+        params={"stream": False},
+    )
+    adapter = build_adapter(record, env={"KEY": "k"})
+    assert adapter.stream is False
+
+
 def test_budget_defaults_and_overrides() -> None:
     assert budget_for("2x2", {}).max_moves == 30
     assert budget_for("2x2", {}).max_seconds == 300.0

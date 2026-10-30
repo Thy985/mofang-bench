@@ -48,6 +48,7 @@ def build_adapter(
         base_url=record.base_url,
         api_key=key,
         model=record.model,
+        stream=bool(record.params.get("stream", True)),
     )
 
 
