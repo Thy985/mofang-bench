@@ -64,6 +64,43 @@ class EpisodeResult:
     steps: list[StepRecord] = field(default_factory=list)
 
 
+class ThinkingThrottle:
+    """把 token 级 thinking 增量按字符数/时间间隔合并成事件，防止事件总线膨胀。"""
+
+    def __init__(
+        self,
+        notify: Callable[[str, dict[str, Any]], None],
+        seq: int,
+        max_chars: int = 64,
+        max_interval: float = 0.15,
+    ) -> None:
+        self._notify = notify
+        self._seq = seq
+        self._max_chars = max_chars
+        self._max_interval = max_interval
+        self._pending: list[str] = []
+        self._last = time.monotonic()
+
+    def __call__(self, phase: str, text: str | None) -> None:
+        if phase != "thinking" or not text:
+            return
+        self._pending.append(text)
+        total = sum(len(part) for part in self._pending)
+        if (
+            total >= self._max_chars
+            or time.monotonic() - self._last >= self._max_interval
+        ):
+            self.flush()
+
+    def flush(self) -> None:
+        if not self._pending:
+            return
+        text = "".join(self._pending)
+        self._pending.clear()
+        self._last = time.monotonic()
+        self._notify("thinking.delta", {"seq": self._seq, "text": text})
+
+
 class _EpisodeCancelled(Exception):
     pass
 
@@ -103,10 +140,17 @@ class EpisodeRunner:
         self,
         messages: list[dict[str, Any]],
         cancel: asyncio.Event | None,
+        on_delta: Callable[[str, str], None] | None = None,
     ) -> ModelTurn:
-        chat = asyncio.create_task(
-            self.provider.chat(messages, self._tools(), self.params)
-        )
+        stream_chat = getattr(self.provider, "chat_stream", None)
+        if stream_chat is not None and on_delta is not None:
+            chat = asyncio.create_task(
+                stream_chat(messages, self._tools(), self.params, on_delta)
+            )
+        else:
+            chat = asyncio.create_task(
+                self.provider.chat(messages, self._tools(), self.params)
+            )
         if cancel is None:
             return await asyncio.wait_for(chat, timeout=self.budget.turn_timeout)
         stop = asyncio.create_task(cancel.wait())
@@ -172,9 +216,10 @@ class EpisodeRunner:
                 executor.state.to_json(), move_history, records, nudge=nudge
             )
             nudge = None
+            throttle = ThinkingThrottle(notify, seq=len(records))
             notify("model.turn.started", {"moves_used": executor.moves_used})
             try:
-                turn = await self._chat(messages, cancel)
+                turn = await self._chat(messages, cancel, on_delta=throttle)
             except _EpisodeCancelled:
                 status = EpisodeStatus.CANCELLED
                 error_message = "cancelled"
@@ -195,6 +240,7 @@ class EpisodeRunner:
                 status = EpisodeStatus.CANCELLED
                 error_message = "cancelled"
                 break
+            throttle.flush()
             tokens_in += turn.usage.prompt_tokens
             tokens_out += turn.usage.completion_tokens
             if tokens_in + tokens_out > self.budget.max_tokens:
@@ -204,6 +250,7 @@ class EpisodeRunner:
                 "model.message",
                 {
                     "content": turn.content,
+                    "thinking": turn.reasoning,
                     "tool_calls": len(turn.tool_calls),
                     "usage": {
                         "prompt_tokens": tokens_in,
@@ -222,7 +269,7 @@ class EpisodeRunner:
                     arguments={
                         "tool_calls": [call.name for call in turn.tool_calls]
                     },
-                    result={"content": turn.content},
+                    result={"content": turn.content, "thinking": turn.reasoning},
                     state=executor.state.to_json(),
                     reference_length_after=self.solver.distance(executor.state),
                 )
