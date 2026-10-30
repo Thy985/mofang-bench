@@ -21,6 +21,7 @@ class ToolCall:
 @dataclass
 class ModelTurn:
     content: str | None = None
+    reasoning: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
     raw: dict[str, Any] = field(default_factory=dict)

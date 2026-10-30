@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from typing import Any
 
 import httpx
@@ -22,6 +23,21 @@ def decode_json(response: httpx.Response) -> dict[str, Any]:
         raise ProviderError(
             "bad_response", f"invalid JSON response: {text[:200]}"
         ) from exc
+
+
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+
+def split_think(content: str | None) -> tuple[str | None, str | None]:
+    """把 content 里 <think>...</think> 段剥离为 (正文, 思考文本)。"""
+    if not content:
+        return content, None
+    parts = _THINK_RE.findall(content)
+    if not parts:
+        return content, None
+    remaining = _THINK_RE.sub("", content).strip()
+    think = "\n\n".join(part.strip() for part in parts if part.strip())
+    return (remaining or None), (think or None)
 
 
 class OpenAICompatibleAdapter:
@@ -131,8 +147,13 @@ class OpenAICompatibleAdapter:
                 )
             )
         usage = data.get("usage") or {}
+        reasoning = message.get("reasoning_content") or message.get("reasoning")
+        content, think = split_think(message.get("content"))
+        if think:
+            reasoning = f"{reasoning}\n{think}" if reasoning else think
         return ModelTurn(
-            content=message.get("content"),
+            content=content,
+            reasoning=reasoning,
             tool_calls=calls,
             usage=Usage(
                 prompt_tokens=int(usage.get("prompt_tokens") or 0),

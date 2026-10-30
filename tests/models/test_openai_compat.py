@@ -190,3 +190,81 @@ async def test_read_timeout_still_reports_timeout_kind(
     assert exc.value.retryable is True
     assert route.call_count == 4
 
+
+@respx.mock
+async def test_parses_reasoning_content(adapter: OpenAICompatibleAdapter) -> None:
+    respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "answer",
+                            "reasoning_content": "step one\nstep two",
+                        }
+                    }
+                ],
+                "usage": {},
+            },
+        )
+    )
+    turn = await adapter.chat(
+        [{"role": "user", "content": "go"}], [], ModelParams()
+    )
+    assert turn.reasoning == "step one\nstep two"
+    assert turn.content == "answer"
+
+
+@respx.mock
+async def test_extracts_think_tags_from_content(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "<think>internal plan</think>final",
+                        }
+                    }
+                ],
+                "usage": {},
+            },
+        )
+    )
+    turn = await adapter.chat(
+        [{"role": "user", "content": "go"}], [], ModelParams()
+    )
+    assert turn.reasoning == "internal plan"
+    assert turn.content == "final"
+
+
+@respx.mock
+async def test_reasoning_merges_think_tags(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": "<think>tag plan</think>ok",
+                            "reasoning_content": "field plan",
+                        }
+                    }
+                ],
+                "usage": {},
+            },
+        )
+    )
+    turn = await adapter.chat(
+        [{"role": "user", "content": "go"}], [], ModelParams()
+    )
+    assert turn.reasoning == "field plan\ntag plan"
+    assert turn.content == "ok"
+
