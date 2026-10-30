@@ -97,6 +97,22 @@ def set_provider_key(
     return get_provider(db, provider_id)
 
 
+def set_provider_param(
+    db: Database, provider_id: str, key: str, value: Any
+) -> ProviderRecord | None:
+    record = get_provider(db, provider_id)
+    if record is None:
+        return None
+    params = record.params
+    params[key] = value
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE providers SET params_json = ? WHERE id = ?",
+            (json.dumps(params, ensure_ascii=False), provider_id),
+        )
+    return get_provider(db, provider_id)
+
+
 def list_providers(db: Database) -> list[ProviderRecord]:
     conn = db.connect()
     try:

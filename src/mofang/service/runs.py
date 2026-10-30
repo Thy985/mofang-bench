@@ -11,7 +11,11 @@ from ..models.provider import ProviderAdapter
 from ..runner.episode import EpisodeRunner
 from ..store.benchmarks import get_benchmark, task_row_id
 from ..store.db import Database
-from ..store.providers import ProviderRecord, get_provider
+from ..store.providers import (
+    ProviderRecord,
+    get_provider,
+    set_provider_param,
+)
 from ..store.runs import (
     add_steps,
     create_episode,
@@ -162,6 +166,12 @@ class RunService:
         except Exception as exc:
             self._fail(run_id, str(exc))
         finally:
+            if (
+                adapter is not None
+                and provider is not None
+                and getattr(adapter, "downgraded", False)
+            ):
+                set_provider_param(self.db, provider.id, "stream", False)
             close = getattr(adapter, "close", None)
             if close is not None:
                 await close()
