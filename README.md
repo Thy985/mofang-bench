@@ -67,7 +67,9 @@ Provider 默认以 `stream: true` 请求，模型的思考过程（`reasoning_co
 或 `<think>` 段）会实时流到 run 页面的思考面板，并随每个 turn 落库，
 回放页可展开查看。网关不支持流式时（4xx 报错含 stream）自动降级为
 非流式并把该 provider 记为 `stream: false`；如需强制非流式，在
-provider 参数里设 `"stream": false`。
+provider 参数里设 `"stream": false`。注意不要把 `stream` 放进 provider 的
+`params.extra`，否则会与 provider 级 stream 开关脱同步；网关的流式怪癖
+一律用 params 级 `"stream": false` 或 `params.extra` 里的其他参数兜底。
 
 ## 本地 API
 

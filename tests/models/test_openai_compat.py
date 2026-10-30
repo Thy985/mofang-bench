@@ -483,3 +483,38 @@ async def test_extra_stream_options_override_default() -> None:
     assert received[0]["stream_options"] == {"include_usage": False}
     assert turn.content == "ok"
 
+
+async def test_stream_ignores_non_string_reasoning_content() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=_sse(
+                {
+                    "choices": [
+                        {"delta": {"reasoning_content": {"text": "structured"}}}
+                    ]
+                },
+                {"choices": [{"delta": {"content": ["list piece"]}}]},
+                {"choices": [{"delta": {"reasoning_content": "real "}}]},
+                {"choices": [{"delta": {"content": "ok"}}]},
+                {"choices": [{"delta": {}, "finish_reason": "stop"}]},
+                {"choices": [], "usage": USAGE},
+            ),
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    adapter = OpenAICompatibleAdapter(
+        base_url=BASE,
+        api_key="secret",
+        model="test-model",
+        client=client,
+    )
+    try:
+        turn = await adapter.chat_stream(
+            [{"role": "user", "content": "go"}], [], ModelParams()
+        )
+    finally:
+        await client.aclose()
+    assert turn.content == "ok"
+    assert turn.reasoning == "real "
+

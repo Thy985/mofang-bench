@@ -212,11 +212,16 @@ class OpenAICompatibleAdapter:
                 finish_reason = choice["finish_reason"]
             delta = choice.get("delta") or {}
             reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+            if not isinstance(reasoning, str):
+                # 部分网关会把结构化 reasoning 塞进该字段，非字符串一律忽略。
+                reasoning = None
             if reasoning:
                 reasoning_parts.append(reasoning)
                 if on_delta is not None:
                     on_delta("thinking", reasoning)
             content = delta.get("content")
+            if not isinstance(content, str):
+                content = None
             if content:
                 content_parts.append(content)
                 if on_delta is not None:
