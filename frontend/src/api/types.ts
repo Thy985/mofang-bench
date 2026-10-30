@@ -235,8 +235,14 @@ export type RunEvent =
   | RunEventBase<'model.turn.started', { moves_used: number }>
   | RunEventBase<
       'model.message',
-      { content: string | null; tool_calls: number; usage: Usage }
+      {
+        content: string | null
+        thinking?: string | null
+        tool_calls: number
+        usage: Usage
+      }
     >
+  | RunEventBase<'thinking.delta', { seq: number; text: string }>
   | RunEventBase<
       'tool.call',
       {

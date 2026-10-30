@@ -337,6 +337,44 @@ describe('liveReducer', () => {
     expect(state.thinking).toBe(false)
   })
 
+  it('thinking.delta 追加缓冲，model.message 归档全文并清空', () => {
+    let state = apply(initialLiveState(), {
+      type: 'connection',
+      connection: 'open',
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('episode.started', {
+        task_id: 'b:t1',
+        reference_length: 4,
+      }),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('thinking.delta', { seq: 0, text: '先看 ' }, 2),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event('thinking.delta', { seq: 0, text: '白面' }, 3),
+    })
+    expect(state.thinkingText).toBe('先看 白面')
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'model.message',
+        {
+          content: '使用 apply_moves',
+          thinking: '先看 白面，再转',
+          tool_calls: 1,
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        },
+        4,
+      ),
+    })
+    expect(state.thinkingText).toBe('')
+    expect(state.logs.at(-1)?.thinking).toBe('先看 白面，再转')
+  })
+
   it('clears thinking on episode.finished', () => {
     let state = apply(stateAfterSnapshot(), {
       type: 'event',

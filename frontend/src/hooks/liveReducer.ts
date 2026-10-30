@@ -18,6 +18,7 @@ export interface LiveLog {
   kind: 'model' | 'tool'
   text: string
   data: unknown
+  thinking?: string | null
 }
 
 export interface MoveBatch {
@@ -36,6 +37,7 @@ export interface LiveState {
   lastEventId: number
   connection: ConnectionState
   thinking: boolean
+  thinkingText: string
   latestBatch: MoveBatch | null
   firstInvalidCall: { tool: string; message: string } | null
   error: string | null
@@ -67,6 +69,7 @@ export function initialLiveState(): LiveState {
     lastEventId: 0,
     connection: 'connecting',
     thinking: false,
+    thinkingText: '',
     latestBatch: null,
     firstInvalidCall: null,
     error: null,
@@ -137,6 +140,7 @@ export function liveReducer(
             latestBatch: null,
             firstInvalidCall: null,
             thinking: false,
+            thinkingText: '',
           }
         : {}),
     }
@@ -172,28 +176,34 @@ export function liveReducer(
         latestBatch: null,
         firstInvalidCall: null,
         thinking: false,
+        thinkingText: '',
         episodeToken: state.episodeToken + 1,
       }
     }
     case 'model.turn.started':
-      return { ...next, thinking: true }
+      return { ...next, thinking: true, thinkingText: '' }
+    case 'thinking.delta':
+      return {
+        ...next,
+        thinkingText: state.thinkingText + event.data.text,
+      }
     case 'model.message': {
+      const entry = {
+        id: event.id,
+        kind: 'model' as const,
+        text: event.data.content ?? '',
+        data: event.data,
+        thinking: event.data.thinking ?? (state.thinkingText || null),
+      }
       const logs = event.data.content
-        ? [
-            ...state.logs,
-            {
-              id: event.id,
-              kind: 'model' as const,
-              text: event.data.content,
-              data: event.data,
-            },
-          ]
+        ? [...state.logs, entry]
         : state.logs
       return {
         ...next,
         logs,
         usage: event.data.usage,
         thinking: false,
+        thinkingText: '',
       }
     }
     case 'tool.call': {

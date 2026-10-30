@@ -12,6 +12,7 @@ const EVENT_TYPES: RunEvent['type'][] = [
   'episode.started',
   'model.turn.started',
   'model.message',
+  'thinking.delta',
   'tool.call',
   'tool.result',
   'move.applied',
