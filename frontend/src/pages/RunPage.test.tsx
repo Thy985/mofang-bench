@@ -391,6 +391,48 @@ describe('RunPage', () => {
     )
   })
 
+  it('流式 thinking 实时渲染到思考面板，结束后归档', async () => {
+    renderPage({ snapshotState: null })
+    await waitFor(() =>
+      expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    const source = FakeEventSource.instances[0]
+    function emit(id: number, type: string, data: unknown) {
+      act(() => {
+        source.onopen?.()
+        source.emit(type, {
+          id,
+          type,
+          run_id: 'run12345678',
+          episode_id: 'e1',
+          ts: '2026-10-26T00:00:04+00:00',
+          data,
+        })
+      })
+    }
+    emit(4, 'episode.started', {
+      task_id: 'b1:t1',
+      reference_length: 3,
+    })
+    emit(5, 'model.turn.started', { moves_used: 0 })
+    emit(6, 'thinking.delta', { seq: 0, text: '推理片段' })
+    expect(screen.getByTestId('thinking-panel')).toHaveTextContent(
+      '推理片段',
+    )
+    emit(7, 'model.message', {
+      content: '回答',
+      thinking: '推理片段 全文',
+      tool_calls: 0,
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    })
+    expect(
+      screen.queryByTestId('thinking-panel'),
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('log-thinking')).toHaveTextContent(
+      '推理片段 全文',
+    )
+  })
+
   it('shows the failure reason above the partial report', async () => {
     renderPage({ snapshotState: null })
     await waitFor(() =>

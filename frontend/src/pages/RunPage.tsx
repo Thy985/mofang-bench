@@ -109,10 +109,18 @@ export function RunLivePanel({
         <StatusBadge status={episode?.status ?? run.status} />
         <span className="text-xs text-text-dim">成本：未配置价格</span>
       </div>
-      {live.thinking && (
+      {live.thinking && !live.thinkingText && (
         <p data-testid="thinking" className="text-sky-300">
           思考中…
         </p>
+      )}
+      {live.thinking && live.thinkingText && (
+        <details open data-testid="thinking-panel">
+          <summary className="cursor-pointer text-sky-300">思考中…</summary>
+          <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-sunken p-2 text-xs text-text-dim">
+            {live.thinkingText}
+          </pre>
+        </details>
       )}
       {live.firstInvalidCall && (
         <p className="text-amber-300">

@@ -152,6 +152,17 @@ export function EpisodeView({
                   {JSON.stringify(step.arguments, null, 2)}
                 </pre>
               </details>
+              {typeof step.result?.thinking === 'string' &&
+                step.result.thinking && (
+                  <details data-testid="step-thinking">
+                    <summary className="cursor-pointer text-xs text-sky-300">
+                      思考过程
+                    </summary>
+                    <pre className="mt-1 overflow-auto whitespace-pre-wrap rounded bg-sunken p-2 text-[10px] text-text-dim">
+                      {step.result.thinking}
+                    </pre>
+                  </details>
+                )}
               <details>
                 <summary className="cursor-pointer text-xs text-text-dim">
                   结果

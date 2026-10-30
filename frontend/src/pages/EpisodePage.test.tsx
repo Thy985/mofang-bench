@@ -218,6 +218,36 @@ describe('EpisodePage', () => {
     ).toBe(before + 1)
   })
 
+  it('model_message 步骤展示思考块', async () => {
+    const user = userEvent.setup()
+    const stepsWithThinking: Step[] = [
+      {
+        ...steps[0],
+        result: { content: 'solving', thinking: '回放思考文本' },
+      },
+      steps[1],
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/episodes/e1') return jsonResponse(episode)
+        if (input === '/api/episodes/e1/steps')
+          return jsonResponse(stepsWithThinking)
+        if (input === '/api/runs/r1') {
+          return jsonResponse({ run, episodes: [episode] })
+        }
+        if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
+        return jsonResponse({ detail: 'not found' }, 404)
+      }),
+    )
+    renderEpisodePage('e1')
+    const rows = await screen.findAllByTestId('step-row')
+    await user.click(rows[0])
+    expect(screen.getByTestId('step-thinking')).toHaveTextContent(
+      '回放思考文本',
+    )
+  })
+
   it('shows the API error instead of loading forever', async () => {
     vi.stubGlobal(
       'fetch',

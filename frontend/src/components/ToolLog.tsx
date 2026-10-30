@@ -17,6 +17,16 @@ export function ToolLog({ logs }: { logs: LiveLog[] }) {
             <summary className="cursor-pointer truncate">
               {log.kind === 'model' ? '模型' : '工具'}：{log.text}
             </summary>
+            {log.kind === 'model' && log.thinking && (
+              <details data-testid="log-thinking" className="mt-1">
+                <summary className="cursor-pointer text-sky-300">
+                  思考过程
+                </summary>
+                <pre className="mt-1 overflow-auto whitespace-pre-wrap rounded bg-sunken p-2 text-[10px] text-text-dim">
+                  {log.thinking}
+                </pre>
+              </details>
+            )}
             <pre className="mt-1 overflow-auto rounded bg-sunken p-2 text-[10px] text-text-dim">
               {JSON.stringify(log.data, null, 2)}
             </pre>
