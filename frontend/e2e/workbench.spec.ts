@@ -38,6 +38,10 @@ test('provider → benchmark → live run → result → replay', async ({
   await page.getByRole('button', { name: '启动 run' }).click()
   await expect(page).toHaveURL(/\/runs\/[0-9a-f]+$/)
   await expect(page.getByTestId('cube-canvas')).toBeVisible()
+  await expect(page.getByTestId('thinking-panel')).toBeVisible({
+    timeout: 15_000,
+  })
+  await expect(page.getByTestId('log-thinking').first()).toBeVisible()
   await expect(page.getByTestId('run-status')).toContainText('已完成', {
     timeout: 30_000,
   })
@@ -56,4 +60,15 @@ test('provider → benchmark → live run → result → replay', async ({
   await expect(
     page.getByTestId('step-row').filter({ hasText: 'apply_moves' }),
   ).toHaveCount(3)
+
+  await page
+    .getByTestId('step-row')
+    .filter({ hasText: 'model_message' })
+    .first()
+    .click()
+  const stepThinking = page.getByTestId('step-thinking')
+  if (await stepThinking.count()) {
+    await stepThinking.first().locator('summary').click()
+    await expect(stepThinking.first()).toContainText(/./)
+  }
 })

@@ -2,8 +2,8 @@
 
 - 项目：魔方模型能力测试台（后端 + 本地 API + Web 工作台）
 - 目录：`D:\Projects\Archive\mofang`
-- 更新：2026-10-29
-- 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做
+- 更新：2026-10-30
+- 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做；批次 1（全流式 reasoning）完成
 
 ## 环境事实（来源：D:\Company\state\CURRENT-STATE.md，2026-09-18；2026-10-26 定点复核）
 
@@ -114,5 +114,8 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - 同一 run 内 episode 串行；跨 run 由 `RunService` 的锁串行，长跑会排队。
 - 保存的 API key 为本地 SQLite 明文；拿到 `data/mofang.db` 即可读取，靠文件系统与账户权限保护。
 - `mofang dev` 首版不重启后端热重载：改 Python 代码需重启命令；Vite 前端保留 HMR。
+- 流式兼容：auto 降级只识别“4xx 且报错含 stream”一种信号；其余网关
+  流式怪癖仍需 `params.extra` 手工兜。流中断不重试（防 usage 双计），
+  直接以 provider_error 终止该 episode。
 - 前端构建产物已按路由拆分：首屏约 289KB（gzip 91KB）；three.js 相关（FaceLegend）
   单独成约 934KB 的 chunk（gzip 249KB），进入 3D 页面时按需加载，不在首屏。

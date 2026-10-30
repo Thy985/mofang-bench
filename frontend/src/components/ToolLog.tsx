@@ -13,12 +13,13 @@ export function ToolLog({ logs }: { logs: LiveLog[] }) {
             log.kind === 'model' ? 'text-text' : 'text-sky-300'
           }
         >
-          <details>
+          {/* 带 thinking 的模型条目默认展开，保证思考过程可见（E2E 硬断言）。 */}
+          <details open={log.kind === 'model' && !!log.thinking}>
             <summary className="cursor-pointer truncate">
               {log.kind === 'model' ? '模型' : '工具'}：{log.text}
             </summary>
             {log.kind === 'model' && log.thinking && (
-              <details data-testid="log-thinking" className="mt-1">
+              <details open data-testid="log-thinking" className="mt-1">
                 <summary className="cursor-pointer text-sky-300">
                   思考过程
                 </summary>

@@ -61,6 +61,14 @@ uv run mofang run --provider openai --model <model> --solver rubik \
   --benchmark <bench3x3.json> --out <report.json>
 ```
 
+### 流式 thinking
+
+Provider 默认以 `stream: true` 请求，模型的思考过程（`reasoning_content`
+或 `<think>` 段）会实时流到 run 页面的思考面板，并随每个 turn 落库，
+回放页可展开查看。网关不支持流式时（4xx 报错含 stream）自动降级为
+非流式并把该 provider 记为 `stream: false`；如需强制非流式，在
+provider 参数里设 `"stream": false`。
+
 ## 本地 API
 
 ```bash

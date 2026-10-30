@@ -191,13 +191,15 @@ export function liveReducer(
       const entry = {
         id: event.id,
         kind: 'model' as const,
-        text: event.data.content ?? '',
+        text:
+          event.data.content ??
+          (event.data.tool_calls ? `tool_calls ×${event.data.tool_calls}` : ''),
         data: event.data,
         thinking: event.data.thinking ?? (state.thinkingText || null),
       }
-      const logs = event.data.content
-        ? [...state.logs, entry]
-        : state.logs
+      // 纯工具调用 turn 没有 content，但思考过程仍要进日志（E2E 硬断言依赖）。
+      const logs =
+        event.data.content || entry.thinking ? [...state.logs, entry] : state.logs
       return {
         ...next,
         logs,
