@@ -68,6 +68,11 @@ export function RunLivePanel({
 }) {
   const episode = live.currentEpisode
   const elapsed = useElapsed(run.started_at)
+  // spec §1：ThinkingPanel 跨 turn 不卸载（折叠态由组件自持、turn 切换不清）。
+  // once-seen 锁存：首个思考文本到达后保持挂载，turn 结束清空文本时面板转入
+  // 空态（ThinkingPanel 对空 text 只留 summary），模型消息归档行为不变。
+  const thinkingSeen = useRef(false)
+  if (live.thinkingText) thinkingSeen.current = true
   const tokens =
     live.usage.prompt_tokens + live.usage.completion_tokens
   const completed = live.episodes.filter(
@@ -124,14 +129,12 @@ export function RunLivePanel({
         <StatusBadge status={episode?.status ?? run.status} />
         <span className="text-xs text-text-dim">成本：未配置价格</span>
       </div>
-      {live.thinking && !live.thinkingText && (
+      {live.thinking && !live.thinkingText && !thinkingSeen.current && (
         <p data-testid="thinking" className="text-sky-300">
           思考中…
         </p>
       )}
-      {live.thinking && live.thinkingText && (
-        <ThinkingPanel text={live.thinkingText} />
-      )}
+      {thinkingSeen.current && <ThinkingPanel text={live.thinkingText} />}
       {live.firstInvalidCall && (
         <p className="text-amber-300">
           首次非法调用：{live.firstInvalidCall.tool} ·{' '}

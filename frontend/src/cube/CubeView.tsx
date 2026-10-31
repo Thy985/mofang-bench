@@ -322,6 +322,11 @@ function Scene(props: CubeViewProps) {
     if (speedRef.current >= INSTANT_SPEED) {
       if (current.current || queue.current.length > 0) {
         snapTo(latestTarget.current)
+        // 瞬间分支同样消费了整批走法，须与 finishMove 一样补发批次完成回调
+        // （交互层附加调用，不动 queue/current/snapTo 机制本身）：
+        // 否则 EpisodePage 连播在 instant 速度下收不到 onBatchComplete，
+        // playing 永卡第一步（eventId 已入去重表，切回 1× 也不会重播）。
+        onBatchCompleteRef.current?.()
       }
     } else {
       if (!current.current) startNextMove()

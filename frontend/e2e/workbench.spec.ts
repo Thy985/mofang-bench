@@ -44,9 +44,11 @@ test('provider → benchmark → live run → result → replay', async ({
   await expect(page.getByTestId('log-thinking').first()).toBeVisible()
 
   // thinking 跟随滚动：仅在面板实际溢出且仍在流式时断言（条件断言防 flake）
+  // 面板现跨 turn 常驻（spec §1），空态时 pre 不渲染，须先确认 pre 存在
   const thinkPanel = page.getByTestId('thinking-panel')
   const thinkPre = thinkPanel.locator('pre')
   if (
+    (await thinkPre.count()) > 0 &&
     (await thinkPanel.isVisible()) &&
     (await thinkPre.evaluate(
       (el) => el.scrollHeight > el.clientHeight,

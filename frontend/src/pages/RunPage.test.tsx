@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -425,11 +426,59 @@ describe('RunPage', () => {
       tool_calls: 0,
       usage: { prompt_tokens: 1, completion_tokens: 1 },
     })
-    expect(
-      screen.queryByTestId('thinking-panel'),
-    ).not.toBeInTheDocument()
+    // spec §1：面板跨 turn 不卸载；turn 结束清空 thinkingText 后转空态（不留全文）
+    expect(screen.getByTestId('thinking-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-panel')).not.toHaveTextContent(
+      '推理片段 全文',
+    )
     expect(screen.getByTestId('log-thinking')).toHaveTextContent(
       '推理片段 全文',
+    )
+  })
+
+  it('折叠态跨 turn 保持：面板不卸载、下个 turn 不重新弹出', async () => {
+    renderPage({ snapshotState: null })
+    await waitFor(() =>
+      expect(FakeEventSource.instances).toHaveLength(1),
+    )
+    const source = FakeEventSource.instances[0]
+    function emit(id: number, type: string, data: unknown) {
+      act(() => {
+        source.onopen?.()
+        source.emit(type, {
+          id,
+          type,
+          run_id: 'run12345678',
+          episode_id: 'e1',
+          ts: '2026-10-26T00:00:04+00:00',
+          data,
+        })
+      })
+    }
+    const user = userEvent.setup()
+    emit(4, 'episode.started', {
+      task_id: 'b1:t1',
+      reference_length: 3,
+    })
+    emit(5, 'model.turn.started', { moves_used: 0 })
+    emit(6, 'thinking.delta', { seq: 0, text: '第一轮思考' })
+    await user.click(screen.getByText('思考中…'))
+    expect(screen.getByTestId('thinking-panel')).not.toHaveAttribute('open')
+    // turn 结束：面板保持挂载且仍折叠（折叠态由组件自持，不被清空重置）
+    emit(7, 'model.message', {
+      content: '回答',
+      thinking: '第一轮思考 全文',
+      tool_calls: 0,
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    })
+    expect(screen.getByTestId('thinking-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('thinking-panel')).not.toHaveAttribute('open')
+    // 下个 turn：面板不再重新弹出，折叠态保持
+    emit(8, 'model.turn.started', { moves_used: 1 })
+    emit(9, 'thinking.delta', { seq: 0, text: '第二轮思考' })
+    expect(screen.getByTestId('thinking-panel')).not.toHaveAttribute('open')
+    expect(screen.getByTestId('thinking-panel')).toHaveTextContent(
+      '第二轮思考',
     )
   })
 

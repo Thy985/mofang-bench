@@ -27,35 +27,39 @@ export function ThinkingPanel({ text }: { text: string }) {
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary className="cursor-pointer text-sky-300">思考中…</summary>
-      <div className="relative mt-1">
-        <pre
-          ref={ref}
-          onScroll={onScroll}
-          className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded bg-sunken p-2 text-xs text-text-dim"
-        >
-          {text}
-        </pre>
-        {!following && (
-          <button
-            type="button"
-            data-testid="thinking-follow"
-            onClick={scrollToBottom}
-            className="absolute right-2 bottom-2 rounded bg-surface-2 px-2 py-1 text-xs text-text shadow"
+      {/* 空 text（turn 结束清空）时只留 summary 空态：组件跨 turn 保持挂载，
+          折叠/展开记忆由上方 useState 自持，滚动/复制逻辑不变 */}
+      {text && (
+        <div className="relative mt-1">
+          <pre
+            ref={ref}
+            onScroll={onScroll}
+            className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded bg-sunken p-2 text-xs text-text-dim"
           >
-            回到底部
-          </button>
-        )}
-        <div className="mt-1 flex justify-end">
-          <Button
-            size="sm"
-            variant="ghost"
-            type="button"
-            onClick={() => void copy()}
-          >
-            {copied ? '已复制' : '复制'}
-          </Button>
+            {text}
+          </pre>
+          {!following && (
+            <button
+              type="button"
+              data-testid="thinking-follow"
+              onClick={scrollToBottom}
+              className="absolute right-2 bottom-2 rounded bg-surface-2 px-2 py-1 text-xs text-text shadow"
+            >
+              回到底部
+            </button>
+          )}
+          <div className="mt-1 flex justify-end">
+            <Button
+              size="sm"
+              variant="ghost"
+              type="button"
+              onClick={() => void copy()}
+            >
+              {copied ? '已复制' : '复制'}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </details>
   )
 }

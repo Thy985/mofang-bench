@@ -2,6 +2,7 @@ import {
   act,
   render,
   screen,
+  waitFor,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -18,20 +19,34 @@ import type {
 import EpisodePage, { EpisodeView } from './EpisodePage'
 
 // 页面模块静态导入 CubeView → three；用例不渲染 3D，mock 掉避免把 three 带进 jsdom。
-vi.mock('../cube/CubeView', () => ({
-  CubeView: (props: {
-    state: CubeState | null
-    resetToken: number
-    batch: { moves: string[] } | null
-  }) => (
-    <div
-      data-testid="cube-stub"
-      data-cube={props.state?.cube ?? 'none'}
-      data-token={props.resetToken}
-      data-moves={props.batch?.moves.join(',') ?? ''}
-    />
-  ),
-}))
+// stub 同时模拟真实内核的 instant 分支（速度 ≥100 瞬间消费批次并回调 onBatchComplete），
+// 用于覆盖「instant 连播不卡死」的跨层链路（终审 I-1）。
+vi.mock('../cube/CubeView', async () => {
+  const { useEffect } = await import('react')
+  return {
+    CubeView: (props: {
+      state: CubeState | null
+      resetToken: number
+      batch: { moves: string[] } | null
+      speed: number
+      onBatchComplete?: () => void
+    }) => {
+      useEffect(() => {
+        if (props.speed >= 100 && props.batch && props.onBatchComplete) {
+          props.onBatchComplete()
+        }
+      }, [props.batch, props.speed, props.onBatchComplete])
+      return (
+        <div
+          data-testid="cube-stub"
+          data-cube={props.state?.cube ?? 'none'}
+          data-token={props.resetToken}
+          data-moves={props.batch?.moves.join(',') ?? ''}
+        />
+      )
+    },
+  }
+})
 
 function playbackStub(overrides: Partial<Playback> = {}): Playback {
   return {
@@ -235,6 +250,54 @@ describe('EpisodePage', () => {
     const cube = screen.getByTestId('cube-stub')
     expect(cube).toHaveAttribute('data-moves', "R'")
     expect(Number(cube.getAttribute('data-token'))).toBe(before + 1)
+  })
+
+  it('instant 速度下连播不卡死：批次被瞬间消费后回调推进，到末步停', async () => {
+    const user = userEvent.setup()
+    // 两步各有走法（中间夹一个无走法思考步）：instant 速度下每批消费完
+    // 必须回调 onBatchComplete 推进，否则连播永卡第一步（终审 I-1）。
+    const multiSteps: Step[] = [
+      steps[0],
+      steps[1],
+      {
+        ...steps[1],
+        id: 's3',
+        seq: 2,
+        arguments: { moves: ['U'] },
+        result: { applied: ['U'], state },
+      },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/episodes/e1') return jsonResponse(episode)
+        if (input === '/api/episodes/e1/steps')
+          return jsonResponse(multiSteps)
+        if (input === '/api/runs/r1') {
+          return jsonResponse({ run, episodes: [episode] })
+        }
+        if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
+        return jsonResponse({ detail: 'not found' }, 404)
+      }),
+    )
+    renderEpisodePage('e1')
+    await screen.findAllByTestId('step-row')
+    await user.selectOptions(screen.getByLabelText('播放速度'), '100')
+    await user.click(screen.getByRole('button', { name: '播放' }))
+    // 连播推进：跳过无走法步，直达末个有走法步
+    await waitFor(() =>
+      expect(screen.getByTestId('playback-position')).toHaveTextContent(
+        '#2 tool_result',
+      ),
+    )
+    // 末步批次播完即停：playing=false（按钮回「播放」）、批次清空
+    await waitFor(() =>
+      expect(screen.getByTestId('cube-stub')).toHaveAttribute(
+        'data-moves',
+        '',
+      ),
+    )
+    expect(screen.getByRole('button', { name: '播放' })).toBeInTheDocument()
   })
 
   it('键盘 ←/→ 步进吸附', async () => {
