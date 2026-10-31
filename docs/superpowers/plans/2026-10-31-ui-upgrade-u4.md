@@ -912,7 +912,7 @@ import {
 - [ ] **Step 6: 跑测试与全量**
 
 Run: `cd frontend && npx vitest run src/components/BinChart.test.tsx src/pages/RunPage.test.tsx && npm run typecheck && npm run test:run`
-Expected: BinChart 2 例 + RunPage 新 2 例 PASS；全量 286 通过（283 + 3，RunPage 若有既有断言冲突以实际输出为准并如实报告）。
+Expected: BinChart 2 例 + RunPage 新 2 例 PASS；全量 287 通过（283 + 4，RunPage 若有既有断言冲突以实际输出为准并如实报告）。
 
 - [ ] **Step 7: Commit**
 
@@ -1396,7 +1396,7 @@ const ComparePage = lazy(() => import('./pages/ComparePage'))
 - [ ] **Step 6: 跑测试与全量**
 
 Run: `cd frontend && npx vitest run src/pages/ComparePage.test.tsx && npm run typecheck && npm run test:run`
-Expected: ComparePage 4 例 PASS；全量 290 通过（286 + 4）。
+Expected: ComparePage 4 例 PASS；全量 291 通过（287 + 4）。
 
 - [ ] **Step 7: Commit**
 
