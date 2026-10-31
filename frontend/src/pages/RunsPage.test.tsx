@@ -181,3 +181,31 @@ describe('RunsView 筛选与排序', () => {
     )
   })
 })
+
+describe('RunsView 勾选对比', () => {
+  it('未选/选一个时按钮 disabled，已选计数 0/2 与 1/2', async () => {
+    const user = userEvent.setup()
+    renderView()
+    const count = screen.getByTestId('runs-selected')
+    expect(count).toHaveTextContent('已选 0/2')
+    const disabled = screen.getByRole('button', { name: '对比' })
+    expect(disabled).toBeDisabled()
+    await user.click(screen.getByLabelText('选择 r-newest'))
+    expect(count).toHaveTextContent('已选 1/2')
+    expect(screen.getByRole('button', { name: '对比' })).toBeDisabled()
+  })
+
+  it('选满两个出现对比链接且 href 带两个 id，再点取消勾选恢复按钮', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await user.click(screen.getByLabelText('选择 r-newest'))
+    await user.click(screen.getByLabelText('选择 r-middle'))
+    expect(screen.getByTestId('runs-selected')).toHaveTextContent('已选 2/2')
+    expect(screen.getByRole('link', { name: '对比' })).toHaveAttribute(
+      'href',
+      '/compare?runs=r-newest,r-middle',
+    )
+    await user.click(screen.getByLabelText('选择 r-middle'))
+    expect(screen.getByRole('button', { name: '对比' })).toBeDisabled()
+  })
+})

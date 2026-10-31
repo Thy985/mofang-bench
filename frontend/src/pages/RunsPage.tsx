@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useRuns, useProviders, useBenchmarks } from '../api/queries'
 import type {
@@ -68,16 +68,34 @@ function SortableTh({
   )
 }
 
-function RunsHeader() {
+function RunsHeader({ selected }: { selected: string[] }) {
+  const canCompare = selected.length === 2
   return (
     <div className="flex items-center justify-between">
       <h1 className="text-2xl font-semibold">Runs</h1>
-      <Link
-        className="rounded bg-accent px-4 py-2 text-sm text-white"
-        to="/runs/new"
-      >
-        New Run
-      </Link>
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-text-dim" data-testid="runs-selected">
+          已选 {selected.length}/2
+        </span>
+        {canCompare ? (
+          <Link
+            className="rounded bg-accent px-4 py-2 text-sm text-white"
+            to={`/compare?runs=${encodeURIComponent(selected[0])},${encodeURIComponent(selected[1])}`}
+          >
+            对比
+          </Link>
+        ) : (
+          <Button type="button" disabled>
+            对比
+          </Button>
+        )}
+        <Link
+          className="rounded bg-accent px-4 py-2 text-sm text-white"
+          to="/runs/new"
+        >
+          New Run
+        </Link>
+      </div>
     </div>
   )
 }
@@ -95,6 +113,17 @@ export function RunsView({ runs, providers, benchmarks }: RunsViewProps) {
   const statusFilter = searchParams.get('status') ?? ''
   const sort = (searchParams.get('sort') ?? 'created_at') as SortKey
   const order = (searchParams.get('order') ?? 'desc') as SortOrder
+
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+
+  function toggleRun(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   function setParams(mutate: (params: URLSearchParams) => void) {
     const next = new URLSearchParams(searchParams)
@@ -160,7 +189,7 @@ export function RunsView({ runs, providers, benchmarks }: RunsViewProps) {
 
   return (
     <div className="space-y-4">
-      <RunsHeader />
+      <RunsHeader selected={[...selected]} />
       <div data-testid="runs-filter" className="flex flex-wrap items-end gap-3">
         <Select
           aria-label="provider 筛选"
@@ -235,6 +264,9 @@ export function RunsView({ runs, providers, benchmarks }: RunsViewProps) {
         <Table>
           <thead>
             <tr>
+              <Th>
+                <span className="sr-only">选择</span>
+              </Th>
               <Th>run</Th>
               <Th>provider</Th>
               <Th>benchmark</Th>
@@ -258,6 +290,14 @@ export function RunsView({ runs, providers, benchmarks }: RunsViewProps) {
           <tbody>
             {visible.map((run) => (
               <tr key={run.id} data-testid="run-row">
+                <Td>
+                  <input
+                    type="checkbox"
+                    aria-label={`选择 ${shortId(run.id)}`}
+                    checked={selected.has(run.id)}
+                    onChange={() => toggleRun(run.id)}
+                  />
+                </Td>
                 <Td>
                   <Link
                     className="text-accent"
@@ -294,7 +334,7 @@ export default function RunsPage() {
   if (runs.error) {
     return (
       <div className="space-y-4">
-        <RunsHeader />
+        <RunsHeader selected={[]} />
         <div className="flex items-center gap-3">
           <Alert>{describeError(runs.error)}</Alert>
           <Button type="button" onClick={() => void runs.refetch()}>

@@ -391,6 +391,7 @@ describe('RunsView', () => {
     )
     const headers = screen.getAllByRole('columnheader')
     expect(headers.map((header) => header.textContent)).toEqual([
+      '选择',
       'run',
       'provider',
       'benchmark',
