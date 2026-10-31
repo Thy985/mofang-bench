@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
@@ -12,7 +13,8 @@ import { Table, Td, Th } from './Table'
 describe('Button', () => {
   it.each([
     ['primary', 'bg-accent'],
-    ['neutral', 'border-line'],
+    ['secondary', 'border-line'],
+    ['ghost', 'text-text-dim'],
     ['danger', 'border-danger'],
     ['warning', 'border-warning'],
   ] as const)('renders %s variant class', (variant, expected) => {
@@ -20,7 +22,7 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: 'go' })).toHaveClass(expected)
   })
 
-  it('defaults to neutral and passes through type and disabled', () => {
+  it('defaults to secondary and passes through type and disabled', () => {
     render(
       <Button type="submit" disabled>
         保存
@@ -35,6 +37,31 @@ describe('Button', () => {
   it('appends caller className', () => {
     render(<Button className="w-full">go</Button>)
     expect(screen.getByRole('button')).toHaveClass('w-full')
+  })
+
+  it('size sm renders smaller padding and text', () => {
+    render(<Button size="sm">go</Button>)
+    expect(screen.getByRole('button', { name: 'go' })).toHaveClass('px-2.5')
+    expect(screen.getByRole('button', { name: 'go' })).toHaveClass('text-xs')
+  })
+
+  it('loading shows spinner, disables and blocks clicks', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button loading onClick={onClick}>
+        提交
+      </Button>,
+    )
+    const button = screen.getByRole('button', { name: '提交' })
+    expect(button).toBeDisabled()
+    expect(button.querySelector('[role="status"]')).not.toBeNull()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('renders focus-visible accent ring class', () => {
+    render(<Button>go</Button>)
+    expect(screen.getByRole('button')).toHaveClass('focus-visible:outline-accent')
   })
 })
 
