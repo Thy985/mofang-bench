@@ -53,7 +53,9 @@
 - **新增 EmptyState**：图标位 + 主文案 + 动作按钮。
 - **新增 PageHeader**：标题 + 副文案 + 右侧 actions + 返回链接。
 - **新增 Stat**：label + mono value + 可选 delta。
-- **StatusBadge**：换 accent-soft 底色体系，语义色不变。
+- **StatusBadge**：仅统一形状（rounded-md、内边距对齐）；色彩维持运行状态
+  语义豁免（components/StatusBadge.tsx 内注释已声明 sky/emerald/rose/amber
+  不收敛到主题 token），不改色。
 
 ### Layout 壳（frontend/src/components/Layout.tsx）
 
