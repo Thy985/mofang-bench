@@ -139,6 +139,7 @@ export function BenchmarksView({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    if (submitting) return
     setConflictId(null)
     const errors: Record<string, string> = {}
     if (FORBIDDEN_NAME_CHARS.some((char) => form.name.includes(char))) {
@@ -348,6 +349,9 @@ export default function BenchmarksPage() {
           await create.mutateAsync(payload)
           toast.success('题集已生成')
         } catch (err) {
+          // spec 决策 ③：409 冲突由 View 行内展示（readConflict 已处理），
+          // 不进 toast，避免英文原始 message 上屏
+          if (readConflict(err)) throw err
           toastError(toast, err)
           throw err
         }

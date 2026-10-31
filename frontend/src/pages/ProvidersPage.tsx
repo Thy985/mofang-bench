@@ -79,15 +79,22 @@ export function ProvidersView({
   function update(key: keyof typeof initialForm, value: string) {
     setForm((current) => ({ ...current, [key]: value }))
     setFieldErrors((current) => {
-      if (!(key in current)) return current
+      // api_key 错误（「API key 与环境变量名至少填一个」）是跨字段的，
+      // 两个输入任意一个变化都要清掉对方的错误
+      const related =
+        key === 'api_key' ? 'api_key_ref' : key === 'api_key_ref' ? 'api_key' : null
+      const relatedHit = related !== null && related in current
+      if (!(key in current) && !relatedHit) return current
       const next = { ...current }
       delete next[key]
+      if (related) delete next[related]
       return next
     })
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    if (submitting) return
     const errors: Record<string, string> = {}
     if (
       !form.base_url.startsWith('http://') &&

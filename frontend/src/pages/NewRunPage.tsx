@@ -198,6 +198,7 @@ export function NewRunView({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
+    if (submitting) return
     const { errors, budget: parsedBudget, params: parsedParams } = validate()
     setFieldErrors(errors)
     if (Object.keys(errors).length > 0 || parsedBudget === null) {
@@ -267,7 +268,16 @@ export function NewRunView({
           <span>Benchmark</span>
           <Select
             value={benchmarkId}
-            onChange={(event) => setBenchmarkId(event.target.value)}
+            onChange={(event) => {
+              setBenchmarkId(event.target.value)
+              // providerId 错误文案是「请选择 provider 和 benchmark」，跨字段
+              setFieldErrors((current) => {
+                if (!('providerId' in current)) return current
+                const next = { ...current }
+                delete next.providerId
+                return next
+              })
+            }}
           >
             {benchmarks.map((benchmark) => (
               <option key={benchmark.id} value={benchmark.id}>

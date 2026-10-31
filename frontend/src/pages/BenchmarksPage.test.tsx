@@ -533,6 +533,40 @@ describe('BenchmarksPage toast', () => {
     expect(toast).toBeDefined()
     expect(toast?.textContent).not.toContain('benchmark already exists')
   })
+
+  // spec 决策 ③：409 冲突保留行内展示（View 的 readConflict 路径），
+  // 页面层 catch 不得再弹 toastError——否则英文原始 message 会双重上屏
+  it('后端 409 冲突不出 toast，行内冲突提示与回链仍在', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? {
+            ok: false,
+            status: 409,
+            statusText: 'Conflict',
+            json: async () => ({ detail: conflictDetail('demo-2x2-3') }),
+          }
+        : {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => [],
+          },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'demo')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    const form = await screen.findByTestId('benchmark-form')
+    const alert = await within(form).findByRole('alert')
+    expect(alert).toHaveTextContent('已存在同 id 题集：demo-2x2-3')
+    expect(alert.textContent).not.toContain('benchmark already exists')
+    expect(
+      screen.getByRole('link', { name: '查看已有题集' }),
+    ).toHaveAttribute('href', '/benchmarks/demo-2x2-3')
+    expect(screen.queryByTestId('toast')).toBeNull()
+  })
 })
 
 describe('BenchmarkDetailView', () => {
