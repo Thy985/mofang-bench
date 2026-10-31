@@ -14,8 +14,11 @@ describe('viewControls', () => {
 
   it('正视在 +Z、顶视在 +Y、等轴/重置回初始机位', () => {
     expect(presetCameraPosition('front', 2)).toEqual([0, 0, 6])
-    expect(presetCameraPosition('top', 2)[1]).toBe(6)
-    expect(presetCameraPosition('top', 2)[2]).toBeGreaterThan(0)
+    // 顶视机位极角 φ≈31°，不会被 OrbitControls 的 minPolarAngle=π/6 夹取，距离不变
+    const [topX, topY, topZ] = presetCameraPosition('top', 2)
+    expect(topX).toBe(0)
+    expect(Math.hypot(topY, topZ)).toBeCloseTo(6)
+    expect(Math.atan2(topZ, topY)).toBeCloseTo((31 / 180) * Math.PI)
     expect(presetCameraPosition('iso', 3)).toEqual(initialCameraPosition(3))
     expect(presetCameraPosition('reset', 2)).toEqual(initialCameraPosition(2))
   })

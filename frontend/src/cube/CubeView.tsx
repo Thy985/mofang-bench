@@ -111,13 +111,16 @@ function Scene(props: CubeViewProps) {
     if (props.viewRequest.token === lastViewToken.current) return
     lastViewToken.current = props.viewRequest.token
     const size = props.state ? sizeOf(props.state.cube) : 2
-    viewAnim.current = {
-      from: camera.position.clone(),
-      to: new THREE.Vector3(
-        ...presetCameraPosition(props.viewRequest.preset, size),
-      ),
-      elapsed: 0,
+    const to = new THREE.Vector3(
+      ...presetCameraPosition(props.viewRequest.preset, size),
+    )
+    if (reducedMotion) {
+      // 偏好减少动效时跳过逐帧插值，直接落到 lerp 终点并中止动画
+      camera.position.copy(to)
+      viewAnim.current = null
+      return
     }
+    viewAnim.current = { from: camera.position.clone(), to, elapsed: 0 }
   }, [props.viewRequest, props.state, camera])
 
   // 用户开始拖动即中止相机 lerp，并停掉本轮待机自转

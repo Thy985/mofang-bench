@@ -19,9 +19,11 @@ export function presetCameraPosition(
   switch (preset) {
     case 'front':
       return [0, 0, distance]
-    case 'top':
-      // 极角 0 会让 OrbitControls 方位角退化，留一点倾斜
-      return [0, distance, 0.001]
+    case 'top': {
+      // minPolarAngle = π/6 会把 φ<30° 的机位夹回 30°，取 φ≈31° 留出余量
+      const phi = (31 / 180) * Math.PI
+      return [0, distance * Math.cos(phi), distance * Math.sin(phi)]
+    }
     case 'iso':
     case 'reset':
       return initialCameraPosition(size)
