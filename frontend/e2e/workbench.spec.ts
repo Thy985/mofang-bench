@@ -82,6 +82,25 @@ test('provider → benchmark → live run → result → replay', async ({
   ])
   expect(download.suggestedFilename()).toContain('.csv')
 
+  // —— Runs 信息密度：筛选 / 无匹配 / 清除 ——
+  // 记录 run 详情 URL，筛选断言后回到该页继续回放流程。
+  // 状态下拉选项来自现有 runs（唯一 run 为 finished），故先选真实选项验证
+  // 筛选，再经 URL 预置不存在的状态制造无匹配空态。
+  const runDetailUrl = page.url()
+  await page.goto('/runs')
+  await expect(page.getByTestId('run-row')).toHaveCount(1)
+  await page.getByLabel('状态筛选').selectOption('finished')
+  await expect(page.getByTestId('run-row')).toHaveCount(1)
+  await page.goto('/runs?status=queued')
+  await expect(page.getByTestId('runs-no-match')).toBeVisible()
+  await page
+    .getByTestId('runs-no-match')
+    .getByRole('button', { name: '清除筛选' })
+    .click()
+  await expect(page.getByTestId('run-row')).toHaveCount(1)
+
+  await page.goto(runDetailUrl)
+  await expect(page.getByTestId('run-result')).toBeVisible()
   await page.getByTestId('episode-replay-link').first().click()
   await expect(page.getByTestId('cube-canvas')).toBeVisible()
   // scramble 是 R'，mock 固定回 R'：R' 的四次方为单位元，要 3 步才解出，

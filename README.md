@@ -178,6 +178,11 @@ EmptyState 引导；四数据页与详情页加载态统一 PageSkeleton（table
 form 三种变体）；Input·Textarea·Select 已改为恒定 wrapper（错误显隐不再
 替换 DOM）。
 
+U4 信息密度已落地：Runs 页支持 provider/benchmark/状态筛选与创建时间/解出率
+排序（筛选与排序状态进 URL，刷新/分享保留），勾选恰两个 run 可进入
+/compare 对比页——解出率差值（bootstrap CI95）+ 逐题 delta、解出状态不同的
+行高亮；报告分箱以条形图呈现（含 CI95 须线），逐题表新增 tokens 与耗时列。
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有
