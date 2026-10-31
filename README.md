@@ -161,8 +161,9 @@ U1 视觉底座已落地：`@theme` 语义 token 扩容（surface-2 / accent-sof
 font-mono / duration-fast·med / ease-standard），原语层 Button（variant/
 size/loading）/ Input·Textarea·Select（label+error）/ Card / Table·Tr /
 Toast / EmptyState / PageHeader / Stat；动效统一 motion，
-`prefers-reduced-motion` 全局尊重。
-
+`prefers-reduced-motion` 全局尊重。语义色豁免范围 = run 状态徽章、toast
+反馈、表单错误文案（rose）与 logo 装饰（sky）；`accent-soft` /
+`duration-med` 为 U2–U4 预留 token。
 
 ## GPL 边界
 

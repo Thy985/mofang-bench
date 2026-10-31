@@ -38,6 +38,7 @@ export function Button({
     <button
       className={`${VARIANTS[variant]} ${SIZES[size]} ${FOCUS} disabled:opacity-50 disabled:pointer-events-none ${className}`}
       disabled={disabled || loading}
+      aria-busy={loading || undefined}
       {...rest}
     >
       {loading ? (

@@ -32,6 +32,8 @@ describe('Toast', () => {
     expect(toasts).toHaveLength(2)
     expect(screen.getByText('已保存')).toBeInTheDocument()
     expect(screen.getByText('失败提示')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('已保存')
+    expect(screen.getByRole('alert')).toHaveTextContent('失败提示')
   })
 
   it('auto-dismisses after 4s', async () => {
@@ -46,6 +48,8 @@ describe('Toast', () => {
         screen.getByRole('button', { name: 'fire' }).click()
       })
       expect(screen.getAllByTestId('toast')).toHaveLength(2)
+      expect(screen.getByRole('status')).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toBeInTheDocument()
       await act(async () => {
         vi.advanceTimersByTime(4100)
       })

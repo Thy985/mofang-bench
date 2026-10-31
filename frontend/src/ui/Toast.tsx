@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -34,10 +35,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       setToasts((list) => list.filter((item) => item.id !== id))
     }, 4000)
   }, [])
-  const api = {
-    success: (message: string) => push('success', message),
-    error: (message: string) => push('error', message),
-  }
+  const api = useMemo(
+    () => ({
+      success: (message: string) => push('success', message),
+      error: (message: string) => push('error', message),
+    }),
+    [push],
+  )
   return (
     <ToastContext.Provider value={api}>
       {children}
@@ -52,7 +56,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
                 data-testid="toast"
-                role="status"
+                role={toast.tone === 'error' ? 'alert' : 'status'}
                 className={`pointer-events-auto rounded-md border px-3 py-2 text-sm shadow-lg ${
                   toast.tone === 'success'
                     ? 'border-accent-dim bg-emerald-950/90 text-emerald-200'

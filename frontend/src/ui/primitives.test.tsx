@@ -55,6 +55,7 @@ describe('Button', () => {
     )
     const button = screen.getByRole('button', { name: '提交' })
     expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('aria-busy', 'true')
     expect(button.querySelector('[role="status"]')).not.toBeNull()
     await userEvent.click(button)
     expect(onClick).not.toHaveBeenCalled()
