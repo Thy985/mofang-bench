@@ -270,6 +270,111 @@ async def test_reasoning_merges_think_tags(
     assert turn.content == "ok"
 
 
+@respx.mock
+async def test_chat_downgrades_max_tokens_on_400(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions")
+    route.side_effect = [
+        httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "max_tokens must be at most 8192 for this model"
+                }
+            },
+        ),
+        httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]}),
+    ]
+    turn = await adapter.chat(
+        [{"role": "user", "content": "go"}],
+        [],
+        ModelParams(max_tokens=16384),
+    )
+    assert turn.content == "ok"
+    assert route.call_count == 2
+    second = json.loads(route.calls[1].request.content)
+    assert second["max_tokens"] == 8192
+    assert adapter.max_tokens_downgraded is True
+
+
+@respx.mock
+async def test_chat_no_max_tokens_downgrade_at_fallback(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            400,
+            json={"error": {"message": "max_tokens too large"}},
+        )
+    )
+    with pytest.raises(ProviderError) as exc:
+        await adapter.chat(
+            [{"role": "user", "content": "go"}],
+            [],
+            ModelParams(max_tokens=8192),
+        )
+    assert exc.value.kind == "bad_request"
+    assert route.call_count == 1
+    assert adapter.max_tokens_downgraded is False
+
+
+@respx.mock
+async def test_chat_400_unrelated_message_not_downgraded(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            400,
+            json={"error": {"message": "model not found"}},
+        )
+    )
+    with pytest.raises(ProviderError) as exc:
+        await adapter.chat(
+            [{"role": "user", "content": "go"}],
+            [],
+            ModelParams(max_tokens=16384),
+        )
+    assert exc.value.kind == "bad_request"
+    assert route.call_count == 1
+    assert adapter.max_tokens_downgraded is False
+
+
+@respx.mock
+async def test_stream_downgrades_max_tokens_on_400(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    route = respx.post(f"{BASE}/chat/completions")
+    route.side_effect = [
+        httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "This model's maximum context length is 8192 tokens"
+                }
+            },
+        ),
+        httpx.Response(
+            200,
+            content=_sse(
+                {"choices": [{"delta": {"content": "ok"}}]},
+                {"choices": [], "usage": USAGE},
+            ),
+        ),
+    ]
+    turn = await adapter.chat_stream(
+        [{"role": "user", "content": "go"}],
+        [],
+        ModelParams(max_tokens=16384),
+    )
+    assert turn.content == "ok"
+    assert route.call_count == 2
+    second = json.loads(route.calls[1].request.content)
+    assert second["max_tokens"] == 8192
+    assert second["stream"] is True
+    assert adapter.max_tokens_downgraded is True
+
+
 def _sse(*chunks: dict) -> bytes:
     frames = [f"data: {json.dumps(c, ensure_ascii=False)}\n\n" for c in chunks]
     frames.append("data: [DONE]\n\n")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
@@ -10,6 +11,12 @@ import httpx
 from .provider import ModelParams, ModelTurn, ProviderError, ToolCall, Usage
 
 DEFAULT_TIMEOUT = 120.0
+MAX_TOKENS_FALLBACK = 8192
+# 400 且报错指向上限（max_tokens / context length）时，单回合输出预算
+# 超出该模型的输出上限；降级到 MAX_TOKENS_FALLBACK 重试一次。
+_MAX_TOKENS_ERROR_RE = re.compile(
+    r"max_tokens|maximum context|context length", re.IGNORECASE
+)
 
 
 def decode_json(response: httpx.Response) -> dict[str, Any]:
@@ -59,6 +66,7 @@ class OpenAICompatibleAdapter:
         self.timeout = timeout
         self.stream = stream
         self.downgraded = False
+        self.max_tokens_downgraded = False
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0)
         )
@@ -79,8 +87,15 @@ class OpenAICompatibleAdapter:
         tools: list[dict[str, Any]],
         params: ModelParams,
     ) -> ModelTurn:
-        payload = self._build_payload(messages, tools, params, stream=False)
-        response = await self._post(payload)
+        try:
+            payload = self._build_payload(messages, tools, params, stream=False)
+            response = await self._post(payload)
+        except ProviderError as exc:
+            params = self._downgraded_max_tokens(exc, params)
+            if params is None:
+                raise
+            payload = self._build_payload(messages, tools, params, stream=False)
+            response = await self._post(payload)
         return self._parse(response)
 
     async def chat_stream(
@@ -92,8 +107,15 @@ class OpenAICompatibleAdapter:
     ) -> ModelTurn:
         if not self.stream:
             return await self.chat(messages, tools, params)
-        payload = self._build_payload(messages, tools, params, stream=True)
-        response = await self._open_stream(payload)
+        try:
+            payload = self._build_payload(messages, tools, params, stream=True)
+            response = await self._open_stream(payload)
+        except ProviderError as exc:
+            params = self._downgraded_max_tokens(exc, params)
+            if params is None:
+                raise
+            payload = self._build_payload(messages, tools, params, stream=True)
+            response = await self._open_stream(payload)
         if response is None:
             self.downgraded = True
             return await self.chat(messages, tools, params)
@@ -104,6 +126,18 @@ class OpenAICompatibleAdapter:
             raise ProviderError("transport", str(exc)) from exc
         finally:
             await response.aclose()
+
+    def _downgraded_max_tokens(
+        self, exc: ProviderError, params: ModelParams
+    ) -> ModelParams | None:
+        if exc.kind != "bad_request" or not _MAX_TOKENS_ERROR_RE.search(
+            str(exc)
+        ):
+            return None
+        if params.max_tokens <= MAX_TOKENS_FALLBACK:
+            return None
+        self.max_tokens_downgraded = True
+        return replace(params, max_tokens=MAX_TOKENS_FALLBACK)
 
     def _build_payload(
         self,

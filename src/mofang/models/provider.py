@@ -31,7 +31,7 @@ class ModelTurn:
 @dataclass
 class ModelParams:
     temperature: float = 0.0
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     extra: dict[str, Any] = field(default_factory=dict)
 
 

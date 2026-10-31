@@ -75,7 +75,7 @@ def model_params_for(
     extra = values.pop("extra", {})
     return ModelParams(
         temperature=float(values.get("temperature", 0.0)),
-        max_tokens=int(values.get("max_tokens", 4096)),
+        max_tokens=int(values.get("max_tokens", 16384)),
         extra=dict(extra),
     )
 

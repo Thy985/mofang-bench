@@ -109,7 +109,7 @@ describe('ProvidersView', () => {
       api_key: 'sk-test',
       params: {
         temperature: 0,
-        max_tokens: 4096,
+        max_tokens: 16384,
         extra: {},
       },
     })
@@ -132,7 +132,7 @@ describe('ProvidersView', () => {
       api_key_ref: 'LOCAL_KEY',
       params: {
         temperature: 0,
-        max_tokens: 4096,
+        max_tokens: 16384,
         extra: {},
       },
     })

@@ -124,5 +124,10 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
   run budget 的 `turn_timeout`（默认 120s），调大 retry_delay 需同步调大
   `turn_timeout`（run 创建时 `budget` 覆盖）。reasoning 模型单 turn 思考可能
   耗尽 `max_tokens`（deepseek-v4-flash 实测 8192 不够），需按模型调整。
+  单回合 `max_tokens` 默认已提至 16384（2026-10-31，ModelParams/factory/
+  ProvidersPage 表单预填三处同步）；若网关 400 且报错指向上限
+  （max_tokens / context length），adapter 自动降级到 8192 重试一次，
+  并在 run 结束时把 `max_tokens: 8192` 持久化回该 provider params
+  （与 stream 降级同模式），避免后续 run 每 turn 浪费一次 400。
 - 前端构建产物已按路由拆分：首屏约 289KB（gzip 91KB）；three.js 相关（FaceLegend）
   单独成约 934KB 的 chunk（gzip 249KB），进入 3D 页面时按需加载，不在首屏。

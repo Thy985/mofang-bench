@@ -172,6 +172,12 @@ class RunService:
                 and getattr(adapter, "downgraded", False)
             ):
                 set_provider_param(self.db, provider.id, "stream", False)
+            if (
+                adapter is not None
+                and provider is not None
+                and getattr(adapter, "max_tokens_downgraded", False)
+            ):
+                set_provider_param(self.db, provider.id, "max_tokens", 8192)
             close = getattr(adapter, "close", None)
             if close is not None:
                 await close()

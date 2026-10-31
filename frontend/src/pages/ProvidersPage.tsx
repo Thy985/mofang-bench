@@ -44,7 +44,7 @@ const initialForm = {
   api_key: '',
   api_key_ref: '',
   temperature: '0',
-  max_tokens: '4096',
+  max_tokens: '16384',
   extra: '{}',
 }
 

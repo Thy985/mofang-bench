@@ -23,6 +23,16 @@ class DowngradingAdapter:
         return True
 
 
+class MaxTokensDowngradingAdapter:
+    max_tokens_downgraded = True
+
+    async def chat(self, messages, tools, params):
+        return ModelTurn(content=None)
+
+    async def probe_tools(self) -> bool:
+        return True
+
+
 @dataclass
 class ServiceEnv:
     db: Database
@@ -61,3 +71,14 @@ async def test_no_downgrade_keeps_params(tmp_path: Path) -> None:
     await env.service.wait(env.run_id)
     record = get_provider(env.db, env.provider.id)
     assert "stream" not in record.params
+
+
+async def test_max_tokens_downgrade_persisted_to_provider_params(
+    tmp_path: Path,
+) -> None:
+    env = _build_service_env(
+        tmp_path, lambda record: MaxTokensDowngradingAdapter()
+    )
+    await env.service.wait(env.run_id)
+    record = get_provider(env.db, env.provider.id)
+    assert record.params["max_tokens"] == 8192
