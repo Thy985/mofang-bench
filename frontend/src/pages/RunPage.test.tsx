@@ -250,6 +250,32 @@ describe('ResultView', () => {
     expect(result).toHaveTextContent('✓')
     expect(result).toHaveTextContent('—')
   })
+
+  it('逐题表渲染 tokens 与耗时，null 显示 —', () => {
+    const withLatency: Report = {
+      ...report,
+      episodes: [{ ...report.episodes[0], latency_ms: 1234 }],
+    }
+    render(
+      <MemoryRouter>
+        <ResultView report={withLatency} run={run} provider={null} benchmark={null} />
+      </MemoryRouter>,
+    )
+    const result = screen.getByTestId('run-result')
+    expect(within(result).getByText('15')).toBeInTheDocument()
+    expect(within(result).getByText('1.2s')).toBeInTheDocument()
+    expect(within(result).getAllByText('—').length).toBeGreaterThan(0)
+  })
+
+  it('分箱区渲染 BinChart 而非表格', () => {
+    render(
+      <MemoryRouter>
+        <ResultView report={report} run={run} provider={null} benchmark={null} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('bin-chart')).toBeInTheDocument()
+    expect(screen.queryByText('mean_moves')).not.toBeInTheDocument()
+  })
 })
 
 function jsonResponse(body: unknown, status = 200) {

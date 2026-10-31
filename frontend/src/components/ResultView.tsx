@@ -8,9 +8,11 @@ import type {
 } from '../api/types'
 import {
   formatPercent,
+  formatTokens,
   statusLabel,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
+import { BinChart } from './BinChart'
 import { Card } from '../ui/Card'
 import { Skeleton } from '../ui/Skeleton'
 import { Table, Td, Th } from '../ui/Table'
@@ -95,30 +97,7 @@ export function ResultView({
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-text">分箱</h3>
-        <div className="overflow-auto">
-          <Table>
-            <thead>
-              <tr>
-                <Th>bin</Th>
-                <Th>total</Th>
-                <Th>solved</Th>
-                <Th>solve_rate</Th>
-                <Th>mean_moves</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(report.by_bin).map(([bin, stats]) => (
-                <tr key={bin}>
-                  <Td>{bin}</Td>
-                  <Td>{stats.total}</Td>
-                  <Td>{stats.solved}</Td>
-                  <Td>{formatPercent(stats.solve_rate)}</Td>
-                  <Td>{stats.mean_moves.toFixed(1)}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </div>
+        <BinChart byBin={report.by_bin} />
       </div>
 
       <div>
@@ -133,6 +112,8 @@ export function ResultView({
                 <Th>步数</Th>
                 <Th>参照</Th>
                 <Th>效率</Th>
+                <Th>tokens</Th>
+                <Th>耗时</Th>
                 <Th>失败码</Th>
                 <Th />
               </tr>
@@ -149,6 +130,16 @@ export function ResultView({
                     {episode.efficiency == null
                       ? '—'
                       : episode.efficiency.toFixed(2)}
+                  </Td>
+                  <Td>
+                    {episode.tokens_in == null || episode.tokens_out == null
+                      ? '—'
+                      : formatTokens(episode.tokens_in + episode.tokens_out)}
+                  </Td>
+                  <Td>
+                    {episode.latency_ms == null
+                      ? '—'
+                      : `${(episode.latency_ms / 1000).toFixed(1)}s`}
                   </Td>
                   <Td>{episode.failure_code ?? '—'}</Td>
                   <Td>
