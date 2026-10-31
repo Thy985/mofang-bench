@@ -98,6 +98,7 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - M2 API 冒烟（2026-10-26）：`mofang serve` + provider/probe + benchmark + run + SSE 全链路通过；事件 `run.started → … → tool.call/tool.result/move.applied → episode.finished → run.finished`，报告与 CSV/MD 导出可读。该次 run 使用 6 步预算，模型同样未解出（`budget_exceeded`，0/1）。
 - M3 Web 冒烟（2026-10-29，`ollama/gpt-oss:120b`，2x2 depth 1，预算 6 步（最长秒数 120））：UI 全链路通过——新建 provider + probe（支持 tool calling）→ 生成题集 → New Run → 实时 canvas 与工具日志 → 结果页 → CSV/MD/JSON 导出可读 → Episode 回放含 10 条步骤记录；模型未解出，run 正常以 `budget_exceeded` 结束（0/1），无浏览器控制台错误。冒烟使用独立临时 DB（已删除），截图与摘要留在 `frontend/test-results/smoke/`（gitignored）。
 - 批次 1 流式冒烟（2026-10-31，`sensenova/deepseek-v4-flash`，2x2 depth 1，max_tokens 8192）：SSE `thinking.delta` 在真实网关实时流动（服务端单 turn 350+ 事件；浏览器页面内脚本 9 秒消费 371 事件 / 约 2 万字符思考文本）；turn 1 的 thinking 归档 `steps.result_json` 27112 字符，Episode 回放可渲染；网关接受流式，auto 降级未触发（降级路径仍由 fake server 测试覆盖），provider params 未变。**未通关**：该模型单 turn 思考极长（8192 completion tokens 全部耗尽仍未发 tool call，93 秒），下一请求即触发网关 tpm/rpm 429（窗口 reset 8~25s），adapter 重试预算（4 次、共约 7s）扛不住，episode 以 `provider_error` 收场。推论：跑 reasoning 模型需要更大 `max_tokens`（或换非 reasoning 模型）+ 网关限流窗口大于 adapter 退避总时长时 `params` 无法调 retry（factory 未透传 retry_delay，见已知限制）。
+- 退避透传验收（2026-10-31，同网关同模型，`params.retry_delay: 12` + run budget `turn_timeout: 420` / `max_seconds: 1200`）：episode 存活 353s、跨多个 429 窗口完成 3 个 turn（tokens_out 24576），最终 `stopped_unsolved`（模型连发纯思考 turn 触达 MAX_NUDGES，非基础设施问题）——429 不再秒败。注意退避计入 `turn_timeout`（默认 120s）：调大 retry_delay 后需同步调大 budget 的 `turn_timeout`。deepseek-v4-flash 对该任务思考过重（每 turn 烧满 max_tokens、从不发 tool call），不适合作为该基准的冒烟模型。
 - 温度默认 0，但 provider 的 `params` 与 run 的 `params` 都可覆盖 `temperature` / `max_tokens` / `extra`。
 
 ## GPL 边界
@@ -118,9 +119,10 @@ Vite `npm run dev -- --port 5173 --strictPort`；三个端口被占用时会直�
 - 流式兼容：auto 降级只识别“4xx 且报错含 stream”一种信号；其余网关
   流式怪癖仍需 `params.extra` 手工兜。流中断不重试（防 usage 双计），
   直接以 provider_error 终止该 episode。
-- adapter 重试预算（4 次退避，`retry_delay` 默认 1s，factory 未从 provider params
-  透传该参数）扛不住限流窗口较长的网关（如 sensenova tpm/rpm，reset 8~25s+），
-  限流期 episode 会以 `provider_error` 终止；reasoning 模型单 turn 思考可能
+- adapter 重试预算（4 次退避）原先扛不住限流窗口较长的网关；`retry_delay` 已可
+  经 provider params 透传（默认 1s，只接受正数，2026-10-31）。注意退避计入
+  run budget 的 `turn_timeout`（默认 120s），调大 retry_delay 需同步调大
+  `turn_timeout`（run 创建时 `budget` 覆盖）。reasoning 模型单 turn 思考可能
   耗尽 `max_tokens`（deepseek-v4-flash 实测 8192 不够），需按模型调整。
 - 前端构建产物已按路由拆分：首屏约 289KB（gzip 91KB）；three.js 相关（FaceLegend）
   单独成约 934KB 的 chunk（gzip 249KB），进入 3D 页面时按需加载，不在首屏。
