@@ -5,6 +5,7 @@ import { Spinner } from './ui/Spinner'
 
 const BenchmarkDetailPage = lazy(() => import('./pages/BenchmarkDetailPage'))
 const BenchmarksPage = lazy(() => import('./pages/BenchmarksPage'))
+const ComparePage = lazy(() => import('./pages/ComparePage'))
 const EpisodePage = lazy(() => import('./pages/EpisodePage'))
 const NewRunPage = lazy(() => import('./pages/NewRunPage'))
 const ProvidersPage = lazy(() => import('./pages/ProvidersPage'))
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="runs" element={suspense(<RunsPage />)} />
         <Route path="runs/new" element={suspense(<NewRunPage />)} />
         <Route path="runs/:id" element={suspense(<RunPage />)} />
+        <Route path="compare" element={suspense(<ComparePage />)} />
         <Route path="episodes/:id" element={suspense(<EpisodePage />)} />
       </Route>
     </Routes>

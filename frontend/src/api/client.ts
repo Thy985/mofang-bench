@@ -2,6 +2,7 @@ import type {
   BenchmarkCreate,
   BenchmarkDetail,
   BenchmarkSummary,
+  CompareResult,
   Episode,
   ProbeResult,
   Provider,
@@ -109,6 +110,12 @@ export const api = {
       request<Episode>(`/episodes/${encodeURIComponent(id)}`),
     steps: (id: string) =>
       request<Step[]>(`/episodes/${encodeURIComponent(id)}/steps`),
+  },
+  compare: {
+    get: (runIds: [string, string]) =>
+      request<CompareResult>(
+        `/compare?run_ids=${encodeURIComponent(runIds[0])},${encodeURIComponent(runIds[1])}`,
+      ),
   },
 }
 

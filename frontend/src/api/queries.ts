@@ -11,6 +11,8 @@ export const qk = {
   episode: (id: string) => ['episode', id] as const,
   steps: (id: string) => ['steps', id] as const,
   report: (id: string) => ['report', id] as const,
+  compare: (first: string, second: string) =>
+    ['compare', first, second] as const,
 }
 
 export function useProviders() {
@@ -70,5 +72,13 @@ export function useReport(id: string | undefined, enabled: boolean) {
     queryKey: qk.report(id ?? ''),
     queryFn: () => api.runs.report(id!),
     enabled: Boolean(id) && enabled,
+  })
+}
+
+export function useCompare(runIds: [string, string] | null) {
+  return useQuery({
+    queryKey: qk.compare(runIds?.[0] ?? '', runIds?.[1] ?? ''),
+    queryFn: () => api.compare.get(runIds!),
+    enabled: runIds !== null,
   })
 }

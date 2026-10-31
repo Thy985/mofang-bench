@@ -284,3 +284,24 @@ export type RunEvent =
       { status: string; totals: AggregateReport | null }
     >
   | RunEventBase<'run.error', { message: string }>
+
+export interface ComparePair {
+  task_id: string
+  first_solved: boolean
+  second_solved: boolean
+  delta: number
+}
+
+// GET /api/compare 的返回；solve_rate_diff 的 CI 由后端 bootstrap（2000 次）得出，
+// pairs 只覆盖两 run episode 的 task_id 交集，delta = second − first。
+export interface CompareResult {
+  benchmark_id: string
+  content_hash: string
+  tasks: number
+  runs: string[]
+  solve_rate_first: number
+  solve_rate_second: number
+  solve_rate_diff: number
+  ci95: [number, number]
+  pairs: ComparePair[]
+}
