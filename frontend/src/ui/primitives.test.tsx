@@ -5,6 +5,7 @@ import { Button } from './Button'
 import { Card } from './Card'
 import { Input } from './Input'
 import { Textarea } from './Textarea'
+import { Select } from './Select'
 import { Alert } from './Alert'
 import { Skeleton } from './Skeleton'
 import { Spinner } from './Spinner'
@@ -80,6 +81,43 @@ describe('Input / Textarea', () => {
   it('appends caller className to Input', () => {
     render(<Input aria-label="q" className="font-mono" />)
     expect(screen.getByLabelText('q')).toHaveClass('font-mono')
+  })
+})
+
+describe('Input label/error', () => {
+  it('renders bare input when no label and no error', () => {
+    render(<Input aria-label="q" />)
+    expect(screen.getByLabelText('q').tagName).toBe('INPUT')
+  })
+
+  it('wraps with label and error text and sets aria-invalid', () => {
+    render(<Input label="名称" error="必填" />)
+    expect(screen.getByText('名称')).toBeInTheDocument()
+    expect(screen.getByText('必填')).toBeInTheDocument()
+    expect(screen.getByLabelText('名称')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('名称')).toHaveClass('border-danger')
+  })
+})
+
+describe('Select', () => {
+  it('wraps with label and renders options', () => {
+    render(
+      <Select label="速度" defaultValue="1">
+        <option value="1">1×</option>
+        <option value="2">2×</option>
+      </Select>,
+    )
+    expect(screen.getByLabelText('速度').tagName).toBe('SELECT')
+    expect(screen.getByRole('option', { name: '2×' })).toBeInTheDocument()
+  })
+
+  it('shows error tone', () => {
+    render(
+      <Select aria-label="s" error="必选">
+        <option>1</option>
+      </Select>,
+    )
+    expect(screen.getByLabelText('s')).toHaveClass('border-danger')
   })
 })
 
