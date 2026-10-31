@@ -4,7 +4,7 @@ import { describeError } from '../lib/errors'
 import { formatDate } from '../lib/format'
 import type { BenchmarkDetail } from '../api/types'
 import { Alert } from '../ui/Alert'
-import { Skeleton } from '../ui/Skeleton'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Table, Td, Th } from '../ui/Table'
 
 export function BenchmarkDetailView({
@@ -63,13 +63,7 @@ export default function BenchmarkDetailPage() {
   const { id } = useParams()
   const benchmark = useBenchmark(id)
   if (benchmark.isPending) {
-    return (
-      <div aria-busy="true" className="space-y-2">
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-      </div>
-    )
+    return <PageSkeleton variant="form" fields={4} />
   }
   if (benchmark.error) {
     return <Alert tone="danger">{describeError(benchmark.error)}</Alert>

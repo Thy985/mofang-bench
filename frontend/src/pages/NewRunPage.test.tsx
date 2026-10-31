@@ -583,8 +583,21 @@ describe('RunsPage', () => {
     await screen.findByRole('alert')
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(
-      await screen.findByText('还没有运行记录。'),
+      await screen.findByText('还没有运行记录'),
     ).toBeInTheDocument()
     expect(runsCalls).toBe(2)
+  })
+
+  it('RunsView 空数据渲染 EmptyState 与引导链接', () => {
+    render(
+      <MemoryRouter>
+        <RunsView runs={[]} providers={[]} benchmarks={[]} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('还没有运行记录')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '去创建 Run' })).toHaveAttribute(
+      'href',
+      '/runs/new',
+    )
   })
 })

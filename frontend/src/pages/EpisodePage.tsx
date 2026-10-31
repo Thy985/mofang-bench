@@ -16,8 +16,8 @@ import {
   formatTokens,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Stat } from '../ui/Stat'
-import { Skeleton } from '../ui/Skeleton'
 
 export interface EpisodeViewProps {
   episode: Episode
@@ -195,13 +195,7 @@ export default function EpisodePage() {
     runQuery.isPending ||
     benchmarkQuery.isPending
   ) {
-    return (
-      <div aria-busy="true" className="space-y-2">
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-      </div>
-    )
+    return <PageSkeleton variant="form" fields={4} />
   }
   if (!episode) return null
 

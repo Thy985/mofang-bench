@@ -41,6 +41,8 @@ import { Card } from '../ui/Card'
 import { Select } from '../ui/Select'
 import { Skeleton } from '../ui/Skeleton'
 import { Stat } from '../ui/Stat'
+import { useToast } from '../ui/Toast'
+import { toastError } from '../ui/toastError'
 
 function useElapsed(startedAt: string | null): number | null {
   const [now, setNow] = useState(() => Date.now())
@@ -164,6 +166,7 @@ export function RunLivePanel({
 export default function RunPage() {
   const { id } = useParams()
   const queryClient = useQueryClient()
+  const toast = useToast()
   const runQuery = useRun(id)
   const providers = useProviders()
   const live = useRunEvents(id ?? '')
@@ -176,10 +179,12 @@ export default function RunPage() {
   const cancel = useMutation({
     mutationFn: () => api.runs.cancel(id!),
     onSuccess: () => {
+      toast.success('已取消')
       void queryClient.invalidateQueries({ queryKey: qk.run(id!) })
     },
     // spec §8：409（已结束/不可取消）时刷新状态，别让界面停在旧的“运行中”。
-    onError: () => {
+    onError: (err) => {
+      toastError(toast, err)
       void queryClient.invalidateQueries({ queryKey: qk.run(id!) })
       void queryClient.invalidateQueries({ queryKey: qk.runs })
     },

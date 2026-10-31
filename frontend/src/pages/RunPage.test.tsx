@@ -20,6 +20,7 @@ import type {
 import { initialLiveState, type LiveState } from '../hooks/liveReducer'
 import RunPage, { RunLivePanel } from './RunPage'
 import { ResultView } from '../components/ResultView'
+import { ToastProvider } from '../ui/Toast'
 
 vi.mock('../cube/CubeView', () => ({
   CubeView: (props: { state: CubeState | null; resetToken: number }) => (
@@ -305,6 +306,9 @@ function renderPage(options: { snapshotState: CubeState | null }) {
         current_state: options.snapshotState,
       })
     }
+    if (input === '/api/runs/run12345678/cancel') {
+      return jsonResponse({ cancelled: true })
+    }
     if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
     if (input === '/api/providers') return jsonResponse([])
     if (input === '/api/runs/run12345678/report') {
@@ -319,11 +323,13 @@ function renderPage(options: { snapshotState: CubeState | null }) {
   })
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/runs/run12345678']}>
-        <Routes>
-          <Route path="/runs/:id" element={<RunPage />} />
-        </Routes>
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/runs/run12345678']}>
+          <Routes>
+            <Route path="/runs/:id" element={<RunPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   )
 }
@@ -504,5 +510,17 @@ describe('RunPage', () => {
     expect(within(result).getByRole('alert')).toHaveTextContent(
       '上游模型不可用',
     )
+  })
+
+  it('取消成功出「已取消」toast', async () => {
+    renderPage({ snapshotState: null })
+    const user = userEvent.setup()
+    // renderPage 的 mock run 为 running，RunLivePanel 的取消按钮文案是「取消 run」；
+    // 数据异步加载，首帧停在骨架屏，用 findByRole 等按钮出现。
+    const cancelBtn = await screen.findByRole('button', {
+      name: '取消 run',
+    })
+    await user.click(cancelBtn)
+    expect(await screen.findByRole('status')).toHaveTextContent('已取消')
   })
 })

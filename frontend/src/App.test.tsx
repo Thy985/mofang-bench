@@ -63,9 +63,7 @@ describe('App routes', () => {
       await screen.findByRole('heading', { name: 'Runs' }),
     ).toBeInTheDocument()
     // 占位组件只有标题；空状态文案才能证明接的是真实页面
-    expect(
-      await screen.findByText('还没有运行记录。'),
-    ).toBeInTheDocument()
+    expect(await screen.findByText('还没有运行记录')).toBeInTheDocument()
   })
 
   it('renders the new run route', async () => {

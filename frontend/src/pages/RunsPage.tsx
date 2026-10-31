@@ -9,7 +9,8 @@ import { describeError } from '../lib/errors'
 import { formatPercent, shortId, statusLabel } from '../lib/format'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
-import { Skeleton } from '../ui/Skeleton'
+import { EmptyState } from '../ui/EmptyState'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Table, Td, Th } from '../ui/Table'
 
 function RunsHeader() {
@@ -47,7 +48,17 @@ export function RunsView({
     <div className="space-y-4">
       <RunsHeader />
       {runs.length === 0 ? (
-        <p className="text-sm text-text-dim">还没有运行记录。</p>
+        <EmptyState
+          title="还没有运行记录"
+          action={
+            <Link
+              className="rounded bg-accent px-4 py-2 text-sm text-white"
+              to="/runs/new"
+            >
+              去创建 Run
+            </Link>
+          }
+        />
       ) : (
         <Table>
           <thead>
@@ -95,13 +106,7 @@ export default function RunsPage() {
   const providers = useProviders()
   const benchmarks = useBenchmarks()
   if (runs.isPending) {
-    return (
-      <div aria-busy="true" className="space-y-2">
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-      </div>
-    )
+    return <PageSkeleton variant="table" rows={4} />
   }
   if (runs.error) {
     return (
