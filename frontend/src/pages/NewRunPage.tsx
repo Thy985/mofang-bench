@@ -20,6 +20,7 @@ import type {
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
+import { Select } from '../ui/Select'
 import { Skeleton } from '../ui/Skeleton'
 
 const DEFAULTS: Record<CubeKind, Budget> = {
@@ -188,8 +189,7 @@ export function NewRunView({
       >
         <label className="grid gap-1 text-sm">
           <span>Provider</span>
-          <select
-            className="rounded bg-sunken px-3 py-2"
+          <Select
             value={providerId}
             onChange={(event) => setProviderId(event.target.value)}
           >
@@ -198,12 +198,11 @@ export function NewRunView({
                 {provider.name} ({provider.model})
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="grid gap-1 text-sm">
           <span>Benchmark</span>
-          <select
-            className="rounded bg-sunken px-3 py-2"
+          <Select
             value={benchmarkId}
             onChange={(event) => setBenchmarkId(event.target.value)}
           >
@@ -212,12 +211,11 @@ export function NewRunView({
                 {benchmark.name} ({benchmark.cube}, {benchmark.task_count} 题)
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="grid gap-1 text-sm">
           <span>工具模式</span>
-          <select
-            className="rounded bg-sunken px-3 py-2"
+          <Select
             value={toolMode}
             onChange={(event) =>
               setToolMode(event.target.value as ToolMode)
@@ -226,7 +224,7 @@ export function NewRunView({
             <option value="both">both（turn + apply_moves）</option>
             <option value="turn_only">turn only</option>
             <option value="batch_only">apply_moves only</option>
-          </select>
+          </Select>
         </label>
         <div className="grid gap-2 md:col-span-2">
           <p className="text-sm text-text-dim">

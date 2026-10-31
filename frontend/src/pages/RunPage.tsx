@@ -31,6 +31,7 @@ import {
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { Select } from '../ui/Select'
 import { Skeleton } from '../ui/Skeleton'
 
 function useElapsed(startedAt: string | null): number | null {
@@ -311,8 +312,8 @@ export default function RunPage() {
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="flex items-center gap-2">
               <span className="text-text-dim">速度</span>
-              <select
-                className="rounded bg-surface px-2 py-1"
+              <Select
+                aria-label="速度"
                 value={speed}
                 onChange={(event) =>
                   setSpeed(Number(event.target.value))
@@ -322,7 +323,7 @@ export default function RunPage() {
                 <option value={1}>1×</option>
                 <option value={2}>2×</option>
                 <option value={100}>instant</option>
-              </select>
+              </Select>
             </label>
             <Button
               type="button"

@@ -3,7 +3,7 @@
 - 项目：魔方模型能力测试台（后端 + 本地 API + Web 工作台）
 - 目录：`D:\Projects\Archive\mofang`
 - 更新：2026-10-30
-- 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做；批次 1（全流式 reasoning）完成
+- 阶段：Plan 1/2/3 本地完成（M0–M1 核心、M2 API 工作台、M3 Web 工作台），M4 对比页待做；批次 1（全流式 reasoning）完成；前端 U1（视觉底座）完成
 
 ## 环境事实（来源：D:\Company\state\CURRENT-STATE.md，2026-09-18；2026-10-26 定点复核）
 

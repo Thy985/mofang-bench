@@ -157,6 +157,13 @@ npx playwright install chromium   # 首次
 npm run e2e
 ```
 
+U1 视觉底座已落地：`@theme` 语义 token 扩容（surface-2 / accent-soft /
+font-mono / duration-fast·med / ease-standard），原语层 Button（variant/
+size/loading）/ Input·Textarea·Select（label+error）/ Card / Table·Tr /
+Toast / EmptyState / PageHeader / Stat；动效统一 motion，
+`prefers-reduced-motion` 全局尊重。
+
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有

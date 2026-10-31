@@ -15,6 +15,7 @@ import { readInteger, readPositiveInt } from '../lib/validate'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
+import { Select } from '../ui/Select'
 import { Skeleton } from '../ui/Skeleton'
 import { Spinner } from '../ui/Spinner'
 
@@ -156,8 +157,7 @@ export function BenchmarksView({
         </label>
         <label className="grid gap-1 text-sm">
           <span>尺寸</span>
-          <select
-            className="rounded bg-sunken px-3 py-2 text-sm"
+          <Select
             value={form.cube}
             onChange={(event) =>
               setCube(event.target.value as CubeKind)
@@ -165,7 +165,7 @@ export function BenchmarksView({
           >
             <option value="2x2">2x2</option>
             <option value="3x3">3x3</option>
-          </select>
+          </Select>
         </label>
         <div className="grid gap-1 text-sm md:col-span-2">
           <span>打乱深度</span>
