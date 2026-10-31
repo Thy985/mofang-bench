@@ -16,7 +16,21 @@ export function ToolLog({ logs }: { logs: LiveLog[] }) {
           {/* 带 thinking 的模型条目默认展开，保证思考过程可见（E2E 硬断言）。 */}
           <details open={log.kind === 'model' && !!log.thinking}>
             <summary className="cursor-pointer truncate">
-              {log.kind === 'model' ? '模型' : '工具'}：{log.text}
+              <span
+                className={`mr-1 inline-block rounded px-1 py-px align-middle text-[10px] ${
+                  log.kind === 'model'
+                    ? 'bg-accent-soft text-accent'
+                    : 'bg-warning/15 text-warning'
+                }`}
+              >
+                {log.kind === 'model' ? '模型' : '工具'}
+              </span>
+              {log.thinking ? (
+                <span className="mr-1 inline-block rounded bg-sunken px-1 py-px align-middle text-[10px] text-text-dim">
+                  含思考
+                </span>
+              ) : null}
+              {log.text}
             </summary>
             {log.kind === 'model' && log.thinking && (
               <details open data-testid="log-thinking" className="mt-1">

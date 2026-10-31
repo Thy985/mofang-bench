@@ -31,6 +31,7 @@ export function ProgressChart({
         ).toFixed(1)}`,
     )
     .join(' ')
+  const last = points[points.length - 1]
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
@@ -38,12 +39,37 @@ export function ProgressChart({
       role="img"
       aria-label="进度曲线"
     >
+      <line
+        data-testid="progress-limit"
+        x1={x(maxMoves)}
+        x2={x(maxMoves)}
+        y1={pad}
+        y2={height - pad}
+        stroke="#475569"
+        strokeDasharray="4 4"
+      />
+      <text
+        x={x(maxMoves)}
+        y={pad + 10}
+        textAnchor="middle"
+        fill="#94a3b8"
+        fontSize="9"
+      >
+        上限
+      </text>
       <path
         data-testid="progress-path"
         d={path}
         fill="none"
         stroke="#34d399"
         strokeWidth="2"
+      />
+      <circle
+        data-testid="progress-pulse"
+        cx={x(last.moves)}
+        cy={y(last.length ?? 0)}
+        r="4"
+        className="animate-pulse-ring fill-emerald-300/60"
       />
     </svg>
   )
