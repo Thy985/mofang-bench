@@ -15,12 +15,17 @@ import type {
   Provider,
   Run,
 } from '../api/types'
+import { PhaseStepper } from '../components/PhaseStepper'
 import { ProgressChart } from '../components/ProgressChart'
 import { ResultView } from '../components/ResultView'
 import { StatusBadge } from '../components/StatusBadge'
+import { ThinkingPanel } from '../components/ThinkingPanel'
 import { ToolLog } from '../components/ToolLog'
 import { CubeView } from '../cube/CubeView'
 import { FaceLegend } from '../cube/FaceLegend'
+import { ViewPresets } from '../cube/ViewPresets'
+import type { ViewRequest } from '../cube/viewControls'
+import { derivePhase } from '../hooks/liveReducer'
 import { useRunEvents } from '../hooks/useRunEvents'
 import type { LiveState } from '../hooks/liveReducer'
 import { describeError } from '../lib/errors'
@@ -30,9 +35,12 @@ import {
   shortId,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
+import { AnimatedNumber } from '../ui/AnimatedNumber'
 import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
 import { Select } from '../ui/Select'
 import { Skeleton } from '../ui/Skeleton'
+import { Stat } from '../ui/Stat'
 
 function useElapsed(startedAt: string | null): number | null {
   const [now, setNow] = useState(() => Date.now())
@@ -41,15 +49,6 @@ function useElapsed(startedAt: string | null): number | null {
     return () => window.clearInterval(timer)
   }, [])
   return startedAt ? now - new Date(startedAt).getTime() : null
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs text-text-dim">{label}</div>
-      <div className="truncate text-text">{value}</div>
-    </div>
-  )
 }
 
 export function RunLivePanel({
@@ -75,8 +74,8 @@ export function RunLivePanel({
     (item) => item.status !== 'running',
   ).length
   return (
-    <aside className="space-y-4 self-start rounded border border-line bg-surface p-4 text-sm">
-      <div className="grid grid-cols-2 gap-3">
+    <Card className="space-y-4 self-start p-4 text-sm">
+      <div className="grid grid-cols-2 gap-2">
         <Stat
           label="provider"
           value={
@@ -88,15 +87,26 @@ export function RunLivePanel({
         <Stat label="题集" value={benchmark?.name ?? run.benchmark_id} />
         <Stat
           label="进度"
-          value={`${completed}/${benchmark?.tasks.length ?? '?'}`}
+          value={
+            <>
+              <AnimatedNumber value={completed} />
+              {`/${benchmark?.tasks.length ?? '?'}`}
+            </>
+          }
         />
         <Stat label="当前题" value={episode?.task_key ?? '—'} />
         <Stat
+          data-testid="stat-moves"
           label="步数"
           value={
-            episode
-              ? `${episode.moves_used}/${run.budget.max_moves}`
-              : '—'
+            episode ? (
+              <>
+                <AnimatedNumber value={episode.moves_used} />
+                {`/${run.budget.max_moves}`}
+              </>
+            ) : (
+              '—'
+            )
           }
         />
         <Stat
@@ -104,8 +114,12 @@ export function RunLivePanel({
           value={String(episode?.reference_length ?? '—')}
         />
         <Stat label="计时" value={formatDuration(elapsed)} />
-        <Stat label="tokens" value={formatTokens(tokens)} />
+        <Stat
+          label="tokens"
+          value={<AnimatedNumber value={tokens} format={formatTokens} />}
+        />
       </div>
+      <PhaseStepper phase={derivePhase(live)} />
       <div className="flex items-center gap-2">
         <StatusBadge status={episode?.status ?? run.status} />
         <span className="text-xs text-text-dim">成本：未配置价格</span>
@@ -116,12 +130,7 @@ export function RunLivePanel({
         </p>
       )}
       {live.thinking && live.thinkingText && (
-        <details open data-testid="thinking-panel">
-          <summary className="cursor-pointer text-sky-300">思考中…</summary>
-          <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-sunken p-2 text-xs text-text-dim">
-            {live.thinkingText}
-          </pre>
-        </details>
+        <ThinkingPanel text={live.thinkingText} />
       )}
       {live.firstInvalidCall && (
         <p className="text-amber-300">
@@ -145,7 +154,7 @@ export function RunLivePanel({
           取消 run
         </Button>
       )}
-    </aside>
+    </Card>
   )
 }
 
@@ -173,6 +182,7 @@ export default function RunPage() {
     },
   })
   const [speed, setSpeed] = useState(1)
+  const [viewRequest, setViewRequest] = useState<ViewRequest | null>(null)
   const [paused, setPaused] = useState(false)
   const [skipToken, setSkipToken] = useState(0)
   const [cubeReset, setCubeReset] = useState<{
@@ -300,14 +310,26 @@ export default function RunPage() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
         <div className="relative space-y-3">
-          <CubeView
-            state={cubeReset.state}
-            resetToken={cubeReset.token}
-            batch={live.latestBatch}
-            speed={speed}
-            paused={paused}
-            skipToken={skipToken}
-          />
+          <div className="relative">
+            <CubeView
+              state={cubeReset.state}
+              resetToken={cubeReset.token}
+              batch={live.latestBatch}
+              speed={speed}
+              paused={paused}
+              skipToken={skipToken}
+              viewRequest={viewRequest ?? undefined}
+              idleSpin={!finished}
+            />
+            <ViewPresets
+              onRequest={(preset) =>
+                setViewRequest((current) => ({
+                  preset,
+                  token: (current?.token ?? 0) + 1,
+                }))
+              }
+            />
+          </div>
           <FaceLegend />
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <label className="flex items-center gap-2">

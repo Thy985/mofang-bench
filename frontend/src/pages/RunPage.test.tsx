@@ -183,7 +183,7 @@ describe('RunLivePanel', () => {
       />,
     )
     expect(screen.getByText('local / m')).toBeInTheDocument()
-    expect(screen.getByText('2/30')).toBeInTheDocument()
+    expect(screen.getByTestId('stat-moves')).toHaveTextContent('2/30')
     expect(screen.getByTestId('progress-path')).toHaveAttribute(
       'd',
       expect.stringContaining('M'),
