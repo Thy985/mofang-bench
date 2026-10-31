@@ -20,7 +20,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span
       data-testid="status-badge"
-      className={`rounded px-2 py-0.5 text-xs ${
+      className={`rounded-md px-2 py-0.5 text-xs ${
         COLORS[status] ?? 'bg-slate-800 text-slate-300'
       }`}
     >

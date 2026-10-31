@@ -9,7 +9,7 @@ import { Select } from './Select'
 import { Alert } from './Alert'
 import { Skeleton } from './Skeleton'
 import { Spinner } from './Spinner'
-import { Table, Td, Th } from './Table'
+import { Table, Td, Th, Tr } from './Table'
 
 describe('Button', () => {
   it.each([
@@ -129,7 +129,7 @@ describe('Card', () => {
       </Card>,
     )
     const card = screen.getByTestId('box')
-    expect(card).toHaveClass('bg-surface', 'border-line')
+    expect(card).toHaveClass('bg-surface-2', 'border-line')
     expect(card).toHaveClass('p-4')
     expect(card).not.toHaveClass('p-3')
     expect(card).toHaveTextContent('内容')
@@ -171,6 +171,21 @@ describe('Table', () => {
       'border-line',
     )
     expect(screen.getByRole('cell', { name: '值' })).toHaveClass('border-line/50')
+  })
+})
+
+describe('Table row hover', () => {
+  it('Tr renders hover transition class', () => {
+    render(
+      <table>
+        <tbody>
+          <Tr data-testid="row">
+            <Td>cell</Td>
+          </Tr>
+        </tbody>
+      </table>,
+    )
+    expect(screen.getByTestId('row')).toHaveClass('hover:bg-surface')
   })
 })
 
