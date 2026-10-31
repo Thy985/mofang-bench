@@ -120,6 +120,19 @@ describe('Select', () => {
     )
     expect(screen.getByLabelText('s')).toHaveClass('border-danger')
   })
+
+  // 恒定 wrapper（与 Input/Textarea 同一裁决）：error 出现/消失时包裹 div
+  // 不增删，否则 React 会替换 select DOM 节点导致焦点丢失。
+  it('keeps the wrapper div even without label or error', () => {
+    render(
+      <Select aria-label="s" defaultValue="1">
+        <option value="1">1</option>
+      </Select>,
+    )
+    const select = screen.getByLabelText('s')
+    expect(select.closest('div')).not.toBeNull()
+    expect(select).not.toHaveAttribute('aria-invalid')
+  })
 })
 
 describe('Card', () => {

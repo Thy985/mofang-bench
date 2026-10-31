@@ -7,7 +7,14 @@ import {
   Routes,
   useLocation,
 } from 'react-router-dom'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest'
 import type {
   AggregateReport,
   BenchmarkSummary,
@@ -16,6 +23,10 @@ import type {
 } from '../api/types'
 import NewRunPage, { NewRunView } from './NewRunPage'
 import RunsPage, { RunsView } from './RunsPage'
+import { ToastProvider } from '../ui/Toast'
+
+// focusFirstError 会调 scrollIntoView，jsdom 未实现，桩成 no-op。
+Element.prototype.scrollIntoView = vi.fn()
 
 const provider: Provider = {
   id: 'p1',
@@ -88,6 +99,21 @@ function PathProbe() {
   return <div data-testid="landed-at">{location.pathname}</div>
 }
 
+// NewRunView 需要 Router（useSearchParams 预选 benchmark），沿用现有渲染方式包 MemoryRouter
+const viewProps = {
+  providers: [provider],
+  benchmarks,
+  onCreate: vi.fn(async () => {}),
+}
+
+function renderView(props: Partial<typeof viewProps> = {}) {
+  return render(
+    <MemoryRouter>
+      <NewRunView {...viewProps} {...props} />
+    </MemoryRouter>,
+  )
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return {
     ok: status < 400,
@@ -102,6 +128,11 @@ afterEach(() => {
 })
 
 describe('NewRunView', () => {
+  // viewProps.onCreate 是共享 mock，逐用例清空调用记录
+  beforeEach(() => {
+    viewProps.onCreate.mockClear()
+  })
+
   it('uses 2x2 defaults and submits overrides', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
@@ -153,20 +184,12 @@ describe('NewRunView', () => {
     'rejects %s before starting a run',
     async (_label, key, expected) => {
       const user = userEvent.setup()
-      const onCreate = vi.fn().mockResolvedValue(undefined)
-      render(
-        <MemoryRouter>
-          <NewRunView
-            providers={[provider]}
-            benchmarks={benchmarks}
-            onCreate={onCreate}
-          />
-        </MemoryRouter>,
-      )
+      renderView()
       await user.clear(screen.getByLabelText(key))
       await user.click(screen.getByRole('button', { name: '启动 run' }))
-      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
-      expect(onCreate).not.toHaveBeenCalled()
+      // 字段级校验经 Input 的 error 行展示，不再有表单级 role="alert"
+      expect(await screen.findByText(expected)).toBeInTheDocument()
+      expect(viewProps.onCreate).not.toHaveBeenCalled()
     },
   )
 
@@ -202,23 +225,30 @@ describe('NewRunView', () => {
     expect(screen.queryByText(/还没有基准集/)).not.toBeInTheDocument()
   })
 
-  it('maps a rejected create through describeError', async () => {
+  // validate() 全显：两个错误同时出现，并聚焦按 FIELD_ORDER 的首个错误字段
+  it('预算字段错误全显并聚焦首个错误', async () => {
     const user = userEvent.setup()
-    const onCreate = vi.fn().mockRejectedValueOnce(new TypeError('boom'))
-    render(
-      <MemoryRouter>
-        <NewRunView
-          providers={[provider]}
-          benchmarks={benchmarks}
-          onCreate={onCreate}
-        />
-      </MemoryRouter>,
-    )
+    renderView()
+    const maxMoves = screen.getByLabelText('max_moves')
+    await user.clear(maxMoves)
+    const seconds = screen.getByLabelText('max_seconds')
+    await user.clear(seconds)
     await user.click(screen.getByRole('button', { name: '启动 run' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      '网络错误：无法访问后端',
-    )
-    expect(onCreate).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('max_moves 必须是正整数')).toBeInTheDocument()
+    expect(screen.getByText('max_seconds 必须是正数')).toBeInTheDocument()
+    expect(document.activeElement).toBe(maxMoves)
+  })
+
+  // 留空 = 沿用 provider 默认参数，不触发可选参数校验
+  it('清空可选参数不报错（留空沿用 provider 默认）', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await user.clear(screen.getByLabelText('params_temperature'))
+    await user.clear(screen.getByLabelText('params_max_tokens'))
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(
+      screen.queryByText('temperature 必须是 0 到 2 之间的数值'),
+    ).not.toBeInTheDocument()
   })
 
   it('sends optional param overrides when provided', async () => {
@@ -245,22 +275,13 @@ describe('NewRunView', () => {
 
   it('rejects an out-of-range temperature', async () => {
     const user = userEvent.setup()
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <MemoryRouter>
-        <NewRunView
-          providers={[provider]}
-          benchmarks={benchmarks}
-          onCreate={onCreate}
-        />
-      </MemoryRouter>,
-    )
+    renderView()
     await user.type(screen.getByLabelText('params_temperature'), '3')
     await user.click(screen.getByRole('button', { name: '启动 run' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'temperature 必须是 0 到 2 之间的数值',
-    )
-    expect(onCreate).not.toHaveBeenCalled()
+    expect(
+      await screen.findByText('temperature 必须是 0 到 2 之间的数值'),
+    ).toBeInTheDocument()
+    expect(viewProps.onCreate).not.toHaveBeenCalled()
   })
 
   // 后端 Budget 的 max_seconds / turn_timeout 是 float，min=1 的默认 step=1
@@ -287,23 +308,14 @@ describe('NewRunView', () => {
   // 显式 0 要落到组件的中文提示，不能被原生 rangeUnderflow 抢先弹浏览器气泡
   it('rejects an explicit zero through the Chinese message', async () => {
     const user = userEvent.setup()
-    const onCreate = vi.fn().mockResolvedValue(undefined)
-    render(
-      <MemoryRouter>
-        <NewRunView
-          providers={[provider]}
-          benchmarks={benchmarks}
-          onCreate={onCreate}
-        />
-      </MemoryRouter>,
-    )
+    renderView()
     await user.clear(screen.getByLabelText('max_moves'))
     await user.type(screen.getByLabelText('max_moves'), '0')
     await user.click(screen.getByRole('button', { name: '启动 run' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'max_moves 必须是正整数',
-    )
-    expect(onCreate).not.toHaveBeenCalled()
+    expect(
+      await screen.findByText('max_moves 必须是正整数'),
+    ).toBeInTheDocument()
+    expect(viewProps.onCreate).not.toHaveBeenCalled()
   })
 
   // 两个可选参数留空 = 沿用 provider 默认，params 必须是空对象而不是缺键或 0
@@ -412,6 +424,24 @@ describe('RunsView', () => {
 })
 
 describe('NewRunPage', () => {
+  function renderPage(initialEntries = ['/runs/new']) {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={initialEntries}>
+            <Routes>
+              <Route path="/runs/new" element={<NewRunPage />} />
+              <Route path="/runs/:id" element={<PathProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    )
+  }
+
   it('posts the run and navigates to the encoded run path', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(
@@ -425,19 +455,7 @@ describe('NewRunPage', () => {
       },
     )
     vi.stubGlobal('fetch', fetchMock)
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    })
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/runs/new']}>
-          <Routes>
-            <Route path="/runs/new" element={<NewRunPage />} />
-            <Route path="/runs/:id" element={<PathProbe />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    )
+    renderPage()
     await user.click(
       await screen.findByRole('button', { name: '启动 run' }),
     )
@@ -460,20 +478,50 @@ describe('NewRunPage', () => {
         return jsonResponse([])
       }),
     )
+    renderPage()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('后端返回错误（HTTP 500）')
+    expect(alert).toHaveTextContent('boom')
+    expect(screen.queryByText(/还没有 provider/)).not.toBeInTheDocument()
+  })
+})
+
+describe('NewRunPage toast', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // 迁移自 View 级用例「maps a rejected create through describeError」：
+  // 提交失败改走页面层 toastError（决策 ①），表单内不再出现 role="alert"。
+  it('提交失败经 toastError 出中文错误 toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        throw new Error('boom')
+      }
+      if (_input === '/api/providers') return jsonResponse([provider])
+      if (_input === '/api/benchmarks') return jsonResponse(benchmarks)
+      return jsonResponse([])
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/runs/new']}>
-          <NewRunPage />
-        </MemoryRouter>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/runs/new']}>
+            <NewRunPage />
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>,
     )
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('后端返回错误（HTTP 500）')
-    expect(alert).toHaveTextContent('boom')
-    expect(screen.queryByText(/还没有 provider/)).not.toBeInTheDocument()
+    await user.click(
+      await screen.findByRole('button', { name: '启动 run' }),
+    )
+    const toast = await screen.findByRole('alert')
+    expect(toast).toHaveTextContent('网络错误：无法访问后端')
+    expect(toast.textContent).not.toContain('boom')
   })
 })
 

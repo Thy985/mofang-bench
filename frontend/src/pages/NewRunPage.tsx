@@ -20,8 +20,10 @@ import type {
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
-import { Skeleton } from '../ui/Skeleton'
+import { useToast } from '../ui/Toast'
+import { toastError } from '../ui/toastError'
 
 const DEFAULTS: Record<CubeKind, Budget> = {
   '2x2': {
@@ -67,6 +69,36 @@ export interface NewRunViewProps {
   onCreate: (payload: RunCreate) => Promise<void>
 }
 
+const FIELD_IDS: Record<string, string> = {
+  providerId: 'newrun-provider',
+  max_moves: 'newrun-budget-max_moves',
+  max_tool_calls: 'newrun-budget-max_tool_calls',
+  max_tokens: 'newrun-budget-max_tokens',
+  max_seconds: 'newrun-budget-max_seconds',
+  turn_timeout: 'newrun-budget-turn_timeout',
+  temperature: 'newrun-temperature',
+  params_max_tokens: 'newrun-params-max-tokens',
+}
+const FIELD_ORDER = [
+  'providerId',
+  'max_moves',
+  'max_tool_calls',
+  'max_tokens',
+  'max_seconds',
+  'turn_timeout',
+  'temperature',
+  'params_max_tokens',
+]
+
+function focusFirstError(errors: Record<string, string>) {
+  const key = FIELD_ORDER.find((k) => errors[k])
+  if (!key) return
+  const el = document.getElementById(FIELD_IDS[key])
+  if (!el) return
+  el.focus()
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
 export function NewRunView({
   providers,
   benchmarks,
@@ -87,7 +119,7 @@ export function NewRunView({
   )
   const [temperature, setTemperature] = useState('')
   const [maxTokens, setMaxTokens] = useState('')
-  const [formError, setFormError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const selected = benchmarks.find((item) => item.id === benchmarkId)
 
@@ -100,55 +132,76 @@ export function NewRunView({
 
   function updateBudget(key: BudgetKey, value: string) {
     setBudget((current) => ({ ...current, [key]: value }))
+    setFieldErrors((current) => {
+      if (!(key in current)) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
   }
 
-  // 预算用字符串存：数字存法下清空输入会被 React 立刻写回 0，输入框永远清不干净
-  function parseBudget(): Budget | string {
-    const parsed: Partial<Budget> = {}
+  // 留空语义保留：预算五项必填，可选参数留空 = 沿用 provider 默认，不报错。
+  // 与旧 parseBudget/parseParams 的双态签名（Budget | string）不同，
+  // 一次收集全部字段错误做全显，再统一聚焦首个错误字段。
+  function validate(): {
+    errors: Record<string, string>
+    budget: Budget | null
+    params: Record<string, number>
+  } {
+    const errors: Record<string, string> = {}
+    if (!providerId || !benchmarkId) {
+      errors.providerId = '请选择 provider 和 benchmark'
+    }
+    const budgetOut: Partial<Budget> = {}
+    let budgetOk = true
     for (const key of ['max_moves', 'max_tool_calls', 'max_tokens'] as const) {
       const value = readPositiveInt(budget[key])
-      if (value === null) return `${key} 必须是正整数`
-      parsed[key] = value
+      if (value === null) {
+        errors[key] = `${key} 必须是正整数`
+        budgetOk = false
+      } else {
+        budgetOut[key] = value
+      }
     }
     for (const key of ['max_seconds', 'turn_timeout'] as const) {
       const value = readPositiveNumber(budget[key])
-      if (value === null) return `${key} 必须是正数`
-      parsed[key] = value
+      if (value === null) {
+        errors[key] = `${key} 必须是正数`
+        budgetOk = false
+      } else {
+        budgetOut[key] = value
+      }
     }
-    return parsed as Budget
-  }
-
-  // 留空表示沿用 provider 的默认参数
-  function parseParams(): Record<string, number> | string {
     const params: Record<string, number> = {}
     if (temperature.trim() !== '') {
       const value = readNumberInRange(temperature, 0, 2)
-      if (value === null) return 'temperature 必须是 0 到 2 之间的数值'
-      params.temperature = value
+      if (value === null) {
+        errors.temperature = 'temperature 必须是 0 到 2 之间的数值'
+      } else {
+        params.temperature = value
+      }
     }
     if (maxTokens.trim() !== '') {
       const value = readPositiveInt(maxTokens)
-      if (value === null) return 'max_tokens 必须是正整数'
-      params.max_tokens = value
+      if (value === null) {
+        errors.params_max_tokens = 'max_tokens 必须是正整数'
+      } else {
+        params.max_tokens = value
+      }
     }
-    return params
+    return {
+      errors,
+      budget: budgetOk ? (budgetOut as Budget) : null,
+      params,
+    }
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    setFormError(null)
-    if (!providerId || !benchmarkId) {
-      setFormError('请选择 provider 和 benchmark')
-      return
-    }
-    const parsedBudget = parseBudget()
-    if (typeof parsedBudget === 'string') {
-      setFormError(parsedBudget)
-      return
-    }
-    const parsedParams = parseParams()
-    if (typeof parsedParams === 'string') {
-      setFormError(parsedParams)
+    const { errors, budget: parsedBudget, params: parsedParams } = validate()
+    setFieldErrors(errors)
+    if (Object.keys(errors).length > 0 || parsedBudget === null) {
+      focusFirstError(errors)
       return
     }
     setSubmitting(true)
@@ -160,8 +213,8 @@ export function NewRunView({
         params: parsedParams,
         budget: parsedBudget,
       })
-    } catch (err) {
-      setFormError(describeError(err))
+    } catch {
+      // toast 由页面层出（决策 ①）
     } finally {
       setSubmitting(false)
     }
@@ -190,8 +243,18 @@ export function NewRunView({
         <label className="grid gap-1 text-sm">
           <span>Provider</span>
           <Select
+            id="newrun-provider"
             value={providerId}
-            onChange={(event) => setProviderId(event.target.value)}
+            error={fieldErrors.providerId}
+            onChange={(event) => {
+              setProviderId(event.target.value)
+              setFieldErrors((current) => {
+                if (!('providerId' in current)) return current
+                const next = { ...current }
+                delete next.providerId
+                return next
+              })
+            }}
           >
             {providers.map((provider) => (
               <option key={provider.id} value={provider.id}>
@@ -243,11 +306,13 @@ export function NewRunView({
               <label key={key} className="grid gap-1 text-xs">
                 <span>{key}</span>
                 <Input
+                  id={`newrun-budget-${key}`}
                   aria-label={key}
                   type="number"
                   min={1}
                   step={FLOAT_KEYS.has(key) ? 'any' : undefined}
                   value={budget[key]}
+                  error={fieldErrors[key]}
                   onChange={(event) =>
                     updateBudget(key, event.target.value)
                   }
@@ -265,34 +330,49 @@ export function NewRunView({
             <label className="grid gap-1 text-xs">
               <span>temperature</span>
               <Input
+                id="newrun-temperature"
                 aria-label="params_temperature"
                 value={temperature}
-                onChange={(event) => setTemperature(event.target.value)}
+                error={fieldErrors.temperature}
+                onChange={(event) => {
+                  setTemperature(event.target.value)
+                  setFieldErrors((current) => {
+                    if (!('temperature' in current)) return current
+                    const next = { ...current }
+                    delete next.temperature
+                    return next
+                  })
+                }}
               />
               <span className="text-text-dim">0 到 2，留空不覆盖</span>
             </label>
             <label className="grid gap-1 text-xs">
               <span>max_tokens</span>
               <Input
+                id="newrun-params-max-tokens"
                 aria-label="params_max_tokens"
                 type="number"
                 min={1}
                 value={maxTokens}
-                onChange={(event) => setMaxTokens(event.target.value)}
+                error={fieldErrors.params_max_tokens}
+                onChange={(event) => {
+                  setMaxTokens(event.target.value)
+                  setFieldErrors((current) => {
+                    if (!('params_max_tokens' in current)) return current
+                    const next = { ...current }
+                    delete next.params_max_tokens
+                    return next
+                  })
+                }}
               />
               <span className="text-text-dim">留空不覆盖</span>
             </label>
           </div>
         </div>
         <div className="flex items-center gap-3 md:col-span-2">
-          <Button variant="primary" type="submit" disabled={submitting}>
+          <Button variant="primary" type="submit" loading={submitting}>
             启动 run
           </Button>
-          {formError && (
-            <p role="alert" className="text-sm text-rose-300">
-              {formError}
-            </p>
-          )}
         </div>
       </form>
     </div>
@@ -302,6 +382,7 @@ export function NewRunView({
 export default function NewRunPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const toast = useToast()
   const providers = useProviders()
   const benchmarks = useBenchmarks()
   const create = useMutation({
@@ -313,13 +394,7 @@ export default function NewRunPage() {
   })
 
   if (providers.isPending || benchmarks.isPending) {
-    return (
-      <div aria-busy="true" className="space-y-2">
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-      </div>
-    )
+    return <PageSkeleton variant="form" fields={5} />
   }
 
   const loadError = providers.error ?? benchmarks.error
@@ -330,7 +405,13 @@ export default function NewRunPage() {
       benchmarks={benchmarks.data ?? []}
       error={loadError ? describeError(loadError) : null}
       onCreate={async (payload) => {
-        await create.mutateAsync(payload)
+        try {
+          await create.mutateAsync(payload)
+          toast.success('Run 已创建')
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
       }}
     />
   )
