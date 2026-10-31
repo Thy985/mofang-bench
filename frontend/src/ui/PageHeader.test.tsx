@@ -23,4 +23,15 @@ describe('PageHeader', () => {
     )
     expect(screen.getByRole('button', { name: '导出' })).toBeInTheDocument()
   })
+
+  it('pushes actions to the right edge via ml-auto', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <PageHeader title="Run abc123" actions={<button type="button">导出</button>} />
+      </MemoryRouter>,
+    )
+    const actions = container.querySelector('.ml-auto')
+    expect(actions).not.toBeNull()
+    expect(actions).toHaveTextContent('导出')
+  })
 })

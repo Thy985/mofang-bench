@@ -21,4 +21,19 @@ describe('EmptyState', () => {
     render(<EmptyState title="空" />)
     expect(screen.getByText('空')).toBeInTheDocument()
   })
+
+  it('renders optional icon slot above the title', () => {
+    render(<EmptyState title="还没有 run" icon={<span data-testid="icon">▣</span>} />)
+    const icon = screen.getByTestId('icon')
+    const title = screen.getByText('还没有 run')
+    expect(icon).toBeInTheDocument()
+    expect(
+      icon.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('renders no icon slot by default', () => {
+    render(<EmptyState title="空" />)
+    expect(screen.queryByTestId('icon')).toBeNull()
+  })
 })

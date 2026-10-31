@@ -174,6 +174,25 @@ describe('Table', () => {
   })
 })
 
+describe('Table sticky header', () => {
+  it('Th is sticky with surface-2 background', () => {
+    render(
+      <table>
+        <thead>
+          <tr>
+            <Th>粘性</Th>
+          </tr>
+        </thead>
+      </table>,
+    )
+    expect(screen.getByRole('columnheader', { name: '粘性' })).toHaveClass(
+      'sticky',
+      'top-0',
+      'bg-surface-2',
+    )
+  })
+})
+
 describe('Table row hover', () => {
   it('Tr renders hover transition class', () => {
     render(

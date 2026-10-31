@@ -15,7 +15,7 @@ export function Th({ className = '', ...rest }: ThHTMLAttributes<HTMLTableCellEl
   return (
     <th
       scope="col"
-      className={`border-b border-line py-2 text-left font-normal text-text-dim ${className}`}
+      className={`sticky top-0 z-10 bg-surface-2 border-b border-line py-2 text-left font-normal text-text-dim ${className}`}
       {...rest}
     />
   )
