@@ -17,7 +17,11 @@ import type {
 import BenchmarkDetailPage, {
   BenchmarkDetailView,
 } from './BenchmarkDetailPage'
+import { ToastProvider } from '../ui/Toast'
 import BenchmarksPage, { BenchmarksView } from './BenchmarksPage'
+
+// focusFirstError 会调 scrollIntoView，jsdom 未实现，桩成 no-op。
+Element.prototype.scrollIntoView = vi.fn()
 
 const summary: BenchmarkSummary = {
   id: 'demo-2x2-3',
@@ -170,26 +174,6 @@ describe('BenchmarksView', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('maps a non-conflict backend error through describeError', async () => {
-    const onCreate = vi
-      .fn()
-      .mockRejectedValueOnce(new ApiError(400, 'depths must be positive'))
-    await submitDemoForm(onCreate)
-    const alert = await findFormAlert()
-    expect(alert).toHaveTextContent('请求不合法（HTTP 400）')
-    expect(alert).toHaveTextContent('depths must be positive')
-  })
-
-  it('announces an unreachable backend in Chinese instead of the raw message', async () => {
-    const onCreate = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('benchmark already exists'))
-    await submitDemoForm(onCreate)
-    const alert = await findFormAlert()
-    expect(alert).toHaveTextContent('网络错误：无法访问后端')
-    expect(alert.textContent).not.toContain('benchmark already exists')
-  })
-
   it('switches to depth 20 and the rubik solver for 3x3', async () => {
     const user = userEvent.setup()
     const onCreate = vi.fn().mockResolvedValue(undefined)
@@ -239,6 +223,28 @@ describe('BenchmarksView', () => {
     expect(onCreate).not.toHaveBeenCalled()
   })
 
+  it('提交时字段错误全显并聚焦（depths 聚焦到第一个 checkbox）', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    renderView({ onCreate })
+    // 名称有原生 required（空名无字段级兜底文案，保留原生拦截），
+    // 必须先填名，否则 jsdom 约束校验会拦下 submit，字段错误走不到
+    await user.type(screen.getByLabelText('名称'), 'demo')
+    // type=number 在 jsdom 中把无法解析的输入还原为原值（实测 'x' 不会清成空串，
+    // 与先 clear 再提交是同一条 readPositiveInt('') 非法路径），按 brief 回退用 clear
+    await user.clear(screen.getByLabelText('每档题数'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    expect(screen.getByText('至少选择一个深度')).toBeInTheDocument()
+    expect(screen.getByText('每档题数必须是正整数')).toBeInTheDocument()
+    expect(document.activeElement).toHaveAttribute('type', 'checkbox')
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('空列表渲染 EmptyState', () => {
+    renderView({ benchmarks: [], error: null })
+    expect(screen.getByText('还没有基准集')).toBeInTheDocument()
+  })
+
   // required/min/step 挡得住留空与越界（jsdom 会拦下 submit 事件），但 type=number
   // 把无法解析的输入净化成空串：清空与“输入字母”是同一条路径，Number('') 是 0，
   // 会静默生成 0 题或改掉 id 里的 seed，所以只能在这里拦。
@@ -272,7 +278,8 @@ describe('BenchmarksView', () => {
       await user.clear(field)
       if (value !== '') await user.type(field, value)
       await user.click(screen.getByRole('button', { name: '生成基准集' }))
-      expect(await findFormAlert()).toHaveTextContent(expected)
+      // formError 通道已删除：改为断言对应字段的错误文案。
+      expect(await screen.findByText(expected)).toBeInTheDocument()
       expect(onCreate).not.toHaveBeenCalled()
     },
   )
@@ -422,12 +429,14 @@ describe('BenchmarksPage', () => {
     })
     render(
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={['/benchmarks']}>
-          <Routes>
-            <Route path="/benchmarks" element={<BenchmarksPage />} />
-            <Route path="/benchmarks/:id" element={<PathProbe />} />
-          </Routes>
-        </MemoryRouter>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/benchmarks']}>
+            <Routes>
+              <Route path="/benchmarks" element={<BenchmarksPage />} />
+              <Route path="/benchmarks/:id" element={<PathProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
       </QueryClientProvider>,
     )
     await user.type(screen.getByLabelText('名称'), 'odd')
@@ -440,6 +449,90 @@ describe('BenchmarksPage', () => {
       '/api/benchmarks',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+})
+
+describe('BenchmarksPage toast', () => {
+  function renderPage() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <MemoryRouter initialEntries={['/benchmarks']}>
+            <Routes>
+              <Route path="/benchmarks" element={<BenchmarksPage />} />
+              <Route path="/benchmarks/:id" element={<PathProbe />} />
+            </Routes>
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  // 迁移自 View 级用例「maps a non-conflict backend error through describeError」：
+  // 非 409 提交失败改走页面层 toast（409 冲突仍保留行内 role="alert"）。
+  // 与 conflict 行内 alert 区分：用 getAllByRole + textContent 匹配。
+  it('后端 400 经 toastError 出中文转译 + detail 的错误 toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? {
+            ok: false,
+            status: 400,
+            statusText: 'Bad Request',
+            json: async () => ({ detail: 'depths must be positive' }),
+          }
+        : {
+            ok: true,
+            status: 200,
+            statusText: 'OK',
+            json: async () => [],
+          },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'demo')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    const alerts = await screen.findAllByRole('alert')
+    const toast = alerts.find((node) =>
+      node.textContent.includes('depths must be positive'),
+    )
+    expect(toast).toBeDefined()
+    expect(toast).toHaveTextContent('请求不合法（HTTP 400）')
+  })
+
+  // 迁移自 View 级用例「announces an unreachable backend in Chinese instead of the raw message」
+  it('后端不可达经 toastError 出中文错误 toast，不吐原始 message', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        throw new Error('benchmark already exists')
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => [],
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'demo')
+    await user.click(screen.getByLabelText('深度 1'))
+    await user.click(screen.getByRole('button', { name: '生成基准集' }))
+    const alerts = await screen.findAllByRole('alert')
+    const toast = alerts.find((node) =>
+      node.textContent.includes('网络错误：无法访问后端'),
+    )
+    expect(toast).toBeDefined()
+    expect(toast?.textContent).not.toContain('benchmark already exists')
   })
 })
 

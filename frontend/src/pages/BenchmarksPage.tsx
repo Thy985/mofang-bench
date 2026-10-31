@@ -14,15 +14,44 @@ import { formatDate, shortId } from '../lib/format'
 import { readInteger, readPositiveInt } from '../lib/validate'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { EmptyState } from '../ui/EmptyState'
 import { Input } from '../ui/Input'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
-import { Skeleton } from '../ui/Skeleton'
-import { Spinner } from '../ui/Spinner'
+import { useToast } from '../ui/Toast'
+import { toastError } from '../ui/toastError'
 
 const DEPTHS = [1, 2, 3, 5, 10, 20]
 
 // 基准集 id 由 name 拼成并被当作 URL 路径段用，后端对这三个字符回 400
 const FORBIDDEN_NAME_CHARS = ['/', '#', '?'] as const
+
+const FIELD_IDS: Record<string, string> = {
+  name: 'benchmark-name',
+  depths: 'benchmark-depths',
+  per_depth: 'benchmark-per-depth',
+  seed: 'benchmark-seed',
+}
+const FIELD_ORDER = ['name', 'depths', 'per_depth', 'seed']
+
+function focusFirstError(errors: Record<string, string>) {
+  const key = FIELD_ORDER.find((k) => errors[k])
+  if (!key) return
+  if (key === 'depths') {
+    const box = document.querySelector(
+      '#benchmark-depths input[type=checkbox]',
+    )
+    if (box) {
+      ;(box as HTMLElement).focus()
+      box.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      return
+    }
+  }
+  const el = document.getElementById(FIELD_IDS[key])
+  if (!el) return
+  el.focus()
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 
 const initialForm = {
   name: '',
@@ -62,12 +91,18 @@ export function BenchmarksView({
   onCreate,
 }: BenchmarksViewProps) {
   const [form, setForm] = useState(initialForm)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [conflictId, setConflictId] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   function update(key: 'name' | 'per_depth' | 'seed', value: string) {
     setForm((current) => ({ ...current, [key]: value }))
+    setFieldErrors((current) => {
+      if (!(key in current)) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
   }
 
   function setCube(cube: CubeKind) {
@@ -78,6 +113,12 @@ export function BenchmarksView({
         (depth) => cube === '3x3' || depth !== 20,
       ),
     }))
+    setFieldErrors((current) => {
+      if (!('depths' in current)) return current
+      const next = { ...current }
+      delete next.depths
+      return next
+    })
   }
 
   function toggleDepth(depth: number) {
@@ -88,28 +129,39 @@ export function BenchmarksView({
         ? current.depths.filter((item) => item !== depth)
         : [...current.depths, depth].sort((a, b) => a - b),
     }))
+    setFieldErrors((current) => {
+      if (!('depths' in current)) return current
+      const next = { ...current }
+      delete next.depths
+      return next
+    })
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    setFormError(null)
     setConflictId(null)
+    const errors: Record<string, string> = {}
     if (FORBIDDEN_NAME_CHARS.some((char) => form.name.includes(char))) {
-      setFormError('名称不能包含 / # ?')
-      return
+      errors.name = '名称不能包含 / # ?'
     }
     if (form.depths.length === 0) {
-      setFormError('至少选择一个深度')
-      return
+      errors.depths = '至少选择一个深度'
     }
     const perDepth = readPositiveInt(form.per_depth)
     if (perDepth === null) {
-      setFormError('每档题数必须是正整数')
-      return
+      errors.per_depth = '每档题数必须是正整数'
     }
     const seed = readInteger(form.seed)
     if (seed === null) {
-      setFormError('seed 必须是整数')
+      errors.seed = 'seed 必须是整数'
+    }
+    setFieldErrors(errors)
+    if (
+      Object.keys(errors).length > 0 ||
+      perDepth === null ||
+      seed === null
+    ) {
+      focusFirstError(errors)
       return
     }
     setSubmitting(true)
@@ -123,16 +175,14 @@ export function BenchmarksView({
         solver: form.cube === '2x2' ? 'table' : 'rubik',
       })
       setForm(initialForm)
+      setFieldErrors({})
     } catch (err) {
       const conflict = readConflict(err)
       if (conflict) {
-        setConflictId(conflict.id)
-        setFormError(
-          conflict.id ? `已存在同 id 题集：${conflict.id}` : '已存在同 id 题集',
-        )
-      } else {
-        setFormError(describeError(err))
+        // id 为 null（非 JSON 409）时用空串占位，区分「无冲突」与「冲突无回链 id」
+        setConflictId(conflict.id ?? '')
       }
+      // 非 409 失败走页面层 toast（决策 ①）
     } finally {
       setSubmitting(false)
     }
@@ -150,8 +200,10 @@ export function BenchmarksView({
         <label className="grid gap-1 text-sm">
           <span>名称</span>
           <Input
+            id="benchmark-name"
             value={form.name}
             onChange={(event) => update('name', event.target.value)}
+            error={fieldErrors.name}
             required
           />
         </label>
@@ -167,7 +219,7 @@ export function BenchmarksView({
             <option value="3x3">3x3</option>
           </Select>
         </label>
-        <div className="grid gap-1 text-sm md:col-span-2">
+        <div id="benchmark-depths" className="grid gap-1 text-sm md:col-span-2">
           <span>打乱深度</span>
           <div className="flex flex-wrap gap-3">
             {DEPTHS.map((depth) => (
@@ -187,38 +239,40 @@ export function BenchmarksView({
               3x3 生成需要已构建 twophase 表，可能较慢。
             </p>
           )}
+          {fieldErrors.depths && (
+            <p role="alert" className="text-xs text-rose-300">
+              {fieldErrors.depths}
+            </p>
+          )}
         </div>
         <label className="grid gap-1 text-sm">
           <span>每档题数</span>
           <Input
+            id="benchmark-per-depth"
             type="number"
             min={1}
             value={form.per_depth}
             onChange={(event) => update('per_depth', event.target.value)}
+            error={fieldErrors.per_depth}
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>seed</span>
           <Input
+            id="benchmark-seed"
             type="number"
             value={form.seed}
             onChange={(event) => update('seed', event.target.value)}
+            error={fieldErrors.seed}
           />
         </label>
         <div className="flex flex-wrap items-center gap-3 md:col-span-2">
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={submitting}
-          >
-            {submitting && (
-              <Spinner aria-hidden className="mr-2 border-text-dim border-t-white" />
-            )}
+          <Button variant="primary" type="submit" loading={submitting}>
             生成基准集
           </Button>
-          {formError && (
+          {conflictId !== null && (
             <p role="alert" className="text-sm text-rose-300">
-              {formError}
+              {conflictId ? `已存在同 id 题集：${conflictId}` : '已存在同 id 题集'}
               {conflictId && (
                 <Link
                   className="ml-2 text-accent underline"
@@ -233,14 +287,15 @@ export function BenchmarksView({
       </form>
 
       {loading ? (
-        <div aria-busy="true" className="space-y-2">
-          <Skeleton className="h-4 w-1/3" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-5/6" />
-        </div>
+        <PageSkeleton variant="table" rows={4} />
       ) : benchmarks.length === 0 ? (
         // 加载失败时只留错误横幅，不再叠一句“还没有基准集”的引导文案
-        error ? null : <p className="text-sm text-text-dim">还没有基准集。</p>
+        error ? null : (
+          <EmptyState
+            title="还没有基准集"
+            hint="用下方表单生成第一份题集。"
+          />
+        )
       ) : (
         <ul className="space-y-2">
           {benchmarks.map((benchmark) => (
@@ -273,6 +328,7 @@ export function BenchmarksView({
 export default function BenchmarksPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const toast = useToast()
   const benchmarks = useBenchmarks()
   const create = useMutation({
     mutationFn: api.benchmarks.create,
@@ -288,7 +344,13 @@ export default function BenchmarksPage() {
       loading={benchmarks.isPending}
       error={benchmarks.error ? describeError(benchmarks.error) : null}
       onCreate={async (payload) => {
-        await create.mutateAsync(payload)
+        try {
+          await create.mutateAsync(payload)
+          toast.success('题集已生成')
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
       }}
     />
   )
