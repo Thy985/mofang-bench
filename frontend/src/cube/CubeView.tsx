@@ -1,5 +1,5 @@
 import { OrbitControls } from '@react-three/drei'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import type { ColorName, CubeState } from '../api/types'
@@ -8,6 +8,13 @@ import { rotateOffset, specAngle } from './animation'
 import { cubieSlots, sizeOf, slotKey, type Vec3 } from './facelets'
 import { layerSlots, parseMove, rotateSlot, type MoveSpec } from './moves'
 import { MATERIAL_NORMALS, materialIndex, paintPlan } from './repaint'
+import {
+  easeOutProgress,
+  initialCameraPosition,
+  presetCameraPosition,
+  VIEW_LERP_MS,
+  type ViewRequest,
+} from './viewControls'
 
 const CUBIE_SIZE = 0.94
 const DARK = '#0f172a'
@@ -34,6 +41,9 @@ export interface CubeViewProps {
   speed: number
   paused: boolean
   skipToken: number
+  viewRequest?: ViewRequest
+  idleSpin?: boolean
+  onBatchComplete?: () => void
 }
 
 interface Entry {
@@ -66,6 +76,60 @@ function Scene(props: CubeViewProps) {
   const lastBatchId = useRef<number | null>(null)
   const scratchPosition = useRef(new THREE.Vector3())
   const scratchQuat = useRef(new THREE.Quaternion())
+
+  const camera = useThree((state) => state.camera)
+  const controls = useThree((state) => state.controls) as
+    | {
+        addEventListener: (type: 'start', listener: () => void) => void
+        removeEventListener: (type: 'start', listener: () => void) => void
+      }
+    | null
+  const viewAnim = useRef<{
+    from: THREE.Vector3
+    to: THREE.Vector3
+    elapsed: number
+  } | null>(null)
+  const lastViewToken = useRef(0)
+  const userOrbited = useRef(false)
+  const idleSpinRef = useRef(props.idleSpin === true)
+  const onBatchCompleteRef = useRef(props.onBatchComplete)
+  const reducedMotion = window.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  ).matches
+
+  useEffect(() => {
+    idleSpinRef.current = props.idleSpin === true
+  }, [props.idleSpin])
+
+  useEffect(() => {
+    onBatchCompleteRef.current = props.onBatchComplete
+  }, [props.onBatchComplete])
+
+  // 视角预设：token 递增时开始一次相机 lerp（guard 保证重复渲染不重触发）
+  useEffect(() => {
+    if (!props.viewRequest) return
+    if (props.viewRequest.token === lastViewToken.current) return
+    lastViewToken.current = props.viewRequest.token
+    const size = props.state ? sizeOf(props.state.cube) : 2
+    viewAnim.current = {
+      from: camera.position.clone(),
+      to: new THREE.Vector3(
+        ...presetCameraPosition(props.viewRequest.preset, size),
+      ),
+      elapsed: 0,
+    }
+  }, [props.viewRequest, props.state, camera])
+
+  // 用户开始拖动即中止相机 lerp，并停掉本轮待机自转
+  useEffect(() => {
+    if (!controls) return
+    const onStart = () => {
+      viewAnim.current = null
+      userOrbited.current = true
+    }
+    controls.addEventListener('start', onStart)
+    return () => controls.removeEventListener('start', onStart)
+  }, [controls])
 
   useEffect(() => {
     pausedRef.current = props.paused
@@ -149,6 +213,8 @@ function Scene(props: CubeViewProps) {
   // 事件 id 在同一 run 内单调，换 run/换题会从 1 重来，所以吸附时清掉去重标记。
   useEffect(() => {
     lastBatchId.current = null
+    userOrbited.current = false
+    group.current?.rotation.set(0, 0, 0)
     snapTo(props.state)
   }, [props.resetToken])
 
@@ -236,24 +302,45 @@ function Scene(props: CubeViewProps) {
       entry.mesh.quaternion.identity()
     }
     repaint(move.batch.state)
+    onBatchCompleteRef.current?.()
   }
 
   useFrame((_, delta) => {
+    if (viewAnim.current) {
+      viewAnim.current.elapsed += delta * 1000
+      camera.position.lerpVectors(
+        viewAnim.current.from,
+        viewAnim.current.to,
+        easeOutProgress(viewAnim.current.elapsed),
+      )
+      if (viewAnim.current.elapsed >= VIEW_LERP_MS) viewAnim.current = null
+    }
     if (pausedRef.current) return
     if (speedRef.current >= INSTANT_SPEED) {
       if (current.current || queue.current.length > 0) {
         snapTo(latestTarget.current)
       }
-      return
+    } else {
+      if (!current.current) startNextMove()
+      const move = current.current
+      if (move) {
+        move.elapsed += delta * 1000
+        const progress = Math.min(1, move.elapsed / move.duration)
+        const eased = progress * progress * (3 - 2 * progress)
+        applyFrame(move, specAngle(move.spec) * eased)
+        if (progress >= 1) finishMove(move)
+      }
     }
-    if (!current.current) startNextMove()
-    const move = current.current
-    if (!move) return
-    move.elapsed += delta * 1000
-    const progress = Math.min(1, move.elapsed / move.duration)
-    const eased = progress * progress * (3 - 2 * progress)
-    applyFrame(move, specAngle(move.spec) * eased)
-    if (progress >= 1) finishMove(move)
+    if (
+      idleSpinRef.current &&
+      !reducedMotion &&
+      !userOrbited.current &&
+      !current.current &&
+      queue.current.length === 0 &&
+      group.current
+    ) {
+      group.current.rotation.y += delta * 0.3
+    }
   })
 
   return (
@@ -263,6 +350,7 @@ function Scene(props: CubeViewProps) {
       <directionalLight position={[-5, -4, -6]} intensity={0.55} />
       <group ref={group} />
       <OrbitControls
+        makeDefault
         enablePan={false}
         minDistance={4}
         maxDistance={14}
@@ -281,10 +369,7 @@ export function CubeView(props: CubeViewProps) {
     <div data-testid="cube-canvas" className="h-[420px] w-full">
       <Canvas
         key={size}
-        camera={{
-          position: size === 2 ? [3.2, 3.2, 4.2] : [5, 5, 6.5],
-          fov: 45,
-        }}
+        camera={{ position: initialCameraPosition(size), fov: 45 }}
       >
         <Scene {...props} />
       </Canvas>
