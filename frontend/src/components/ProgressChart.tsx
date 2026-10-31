@@ -48,10 +48,11 @@ export function ProgressChart({
         stroke="#475569"
         strokeDasharray="4 4"
       />
+      {/* 参照线可贴右缘，textAnchor="end" 让文字整体落在虚线左侧，避免右溢裁切 */}
       <text
-        x={x(maxMoves)}
+        x={x(maxMoves) - 1}
         y={pad + 10}
-        textAnchor="middle"
+        textAnchor="end"
         fill="#94a3b8"
         fontSize="9"
       >

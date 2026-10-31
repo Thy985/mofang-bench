@@ -95,72 +95,76 @@ export function ResultView({
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-text">分箱</h3>
-        <Table>
-          <thead>
-            <tr>
-              <Th>bin</Th>
-              <Th>total</Th>
-              <Th>solved</Th>
-              <Th>solve_rate</Th>
-              <Th>mean_moves</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(report.by_bin).map(([bin, stats]) => (
-              <tr key={bin}>
-                <Td>{bin}</Td>
-                <Td>{stats.total}</Td>
-                <Td>{stats.solved}</Td>
-                <Td>{formatPercent(stats.solve_rate)}</Td>
-                <Td>{stats.mean_moves.toFixed(1)}</Td>
+        <div className="overflow-auto">
+          <Table>
+            <thead>
+              <tr>
+                <Th>bin</Th>
+                <Th>total</Th>
+                <Th>solved</Th>
+                <Th>solve_rate</Th>
+                <Th>mean_moves</Th>
               </tr>
-            ))}
-          </tbody>
-        </Table>
+            </thead>
+            <tbody>
+              {Object.entries(report.by_bin).map(([bin, stats]) => (
+                <tr key={bin}>
+                  <Td>{bin}</Td>
+                  <Td>{stats.total}</Td>
+                  <Td>{stats.solved}</Td>
+                  <Td>{formatPercent(stats.solve_rate)}</Td>
+                  <Td>{stats.mean_moves.toFixed(1)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
       </div>
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-text">逐题</h3>
-        <Table>
-          <thead>
-            <tr>
-              <Th>task</Th>
-              <Th>状态</Th>
-              <Th>已解出</Th>
-              <Th>步数</Th>
-              <Th>参照</Th>
-              <Th>效率</Th>
-              <Th>失败码</Th>
-              <Th />
-            </tr>
-          </thead>
-          <tbody>
-            {report.episodes.map((episode) => (
-              <tr key={episode.id}>
-                <Td>{episode.task_key}</Td>
-                <Td>{statusLabel(episode.status)}</Td>
-                <Td>{episode.solved ? '✓' : '—'}</Td>
-                <Td>{episode.moves_used}</Td>
-                <Td>{episode.reference_length}</Td>
-                <Td>
-                  {episode.efficiency == null
-                    ? '—'
-                    : episode.efficiency.toFixed(2)}
-                </Td>
-                <Td>{episode.failure_code ?? '—'}</Td>
-                <Td>
-                  <Link
-                    data-testid="episode-replay-link"
-                    className="text-accent"
-                    to={`/episodes/${episode.id}`}
-                  >
-                    回放
-                  </Link>
-                </Td>
+        <div className="overflow-auto">
+          <Table>
+            <thead>
+              <tr>
+                <Th>task</Th>
+                <Th>状态</Th>
+                <Th>已解出</Th>
+                <Th>步数</Th>
+                <Th>参照</Th>
+                <Th>效率</Th>
+                <Th>失败码</Th>
+                <Th />
               </tr>
-            ))}
-          </tbody>
-        </Table>
+            </thead>
+            <tbody>
+              {report.episodes.map((episode) => (
+                <tr key={episode.id}>
+                  <Td>{episode.task_key}</Td>
+                  <Td>{statusLabel(episode.status)}</Td>
+                  <Td>{episode.solved ? '✓' : '—'}</Td>
+                  <Td>{episode.moves_used}</Td>
+                  <Td>{episode.reference_length}</Td>
+                  <Td>
+                    {episode.efficiency == null
+                      ? '—'
+                      : episode.efficiency.toFixed(2)}
+                  </Td>
+                  <Td>{episode.failure_code ?? '—'}</Td>
+                  <Td>
+                    <Link
+                      data-testid="episode-replay-link"
+                      className="text-accent"
+                      to={`/episodes/${episode.id}`}
+                    >
+                      回放
+                    </Link>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
       </div>
 
       {failures.size > 0 && (

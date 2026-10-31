@@ -165,6 +165,12 @@ Toast / EmptyState / PageHeader / Stat；动效统一 motion，
 反馈、表单错误文案（rose）与 logo 装饰（sky）；`accent-soft` /
 `duration-med` 为 U2–U4 预留 token。
 
+U2 观测体验已落地：Run live 面板重组为 Stat 卡组（motion 数字滚动）+
+四态阶段 stepper + 思考面板（内部滚动、自动跟随、可复制）；3D 画布支持
+视角预设（正视/顶视/等轴/重置）与运行中待机自转（尊重
+prefers-reduced-motion）；Episode 回放升级为播放器——连播（播完自动进下
+一步）、scrubber 拖动选步、`←`/`→` 步进、空格播放/暂停。
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有

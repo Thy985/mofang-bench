@@ -42,6 +42,32 @@ test('provider → benchmark → live run → result → replay', async ({
     timeout: 15_000,
   })
   await expect(page.getByTestId('log-thinking').first()).toBeVisible()
+
+  // thinking 跟随滚动：仅在面板实际溢出且仍在流式时断言（条件断言防 flake）
+  const thinkPanel = page.getByTestId('thinking-panel')
+  const thinkPre = thinkPanel.locator('pre')
+  if (
+    (await thinkPanel.isVisible()) &&
+    (await thinkPre.evaluate(
+      (el) => el.scrollHeight > el.clientHeight,
+    ))
+  ) {
+    await thinkPre.evaluate((el) => {
+      el.scrollTop = 0
+      el.dispatchEvent(new Event('scroll'))
+    })
+    const follow = page.getByTestId('thinking-follow')
+    await expect(follow).toBeVisible()
+    await follow.click()
+    await expect
+      .poll(() =>
+        thinkPre.evaluate((el) => el.scrollTop + el.clientHeight),
+      )
+      .toBeGreaterThanOrEqual(
+        await thinkPre.evaluate((el) => el.scrollHeight - 8),
+      )
+  }
+
   await expect(page.getByTestId('run-status')).toContainText('已完成', {
     timeout: 30_000,
   })
@@ -71,4 +97,27 @@ test('provider → benchmark → live run → result → replay', async ({
     await stepThinking.first().locator('summary').click()
     await expect(stepThinking.first()).toContainText(/./)
   }
+
+  // —— 回放播放器：scrubber 双向联动 + 键盘步进/播放暂停 ——
+  // 前面的 step-row 点击已把播放器带到 #0，先点回初始局面再断言
+  await page.getByRole('button', { name: '初始局面' }).click()
+  const scrubber = page.getByTestId('playback-scrubber')
+  await expect(scrubber).toBeVisible()
+  await expect(page.getByTestId('playback-position')).toContainText(
+    '初始局面',
+  )
+  await scrubber.fill('1')
+  await expect(page.getByTestId('playback-position')).not.toContainText(
+    '初始局面',
+  )
+  // 拖动后焦点在 range 上，先点到中性的位置指示上再走键盘（input 聚焦被屏蔽）
+  await page.getByTestId('playback-position').click()
+  await page.keyboard.press('ArrowRight')
+  await expect(page.getByTestId('playback-position')).toContainText('#2')
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.getByTestId('playback-position')).toContainText('#1')
+  await page.keyboard.press(' ')
+  await expect(page.getByRole('button', { name: '暂停' })).toBeVisible()
+  await page.keyboard.press(' ')
+  await expect(page.getByRole('button', { name: '播放' })).toBeVisible()
 })
