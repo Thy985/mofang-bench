@@ -1,15 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useBenchmark, useEpisode, useRun, useSteps } from '../api/queries'
-import type {
-  CubeState,
-  Episode,
-  Step,
-} from '../api/types'
+import type { Episode, Step } from '../api/types'
+import { PlayerBar } from '../components/PlayerBar'
 import { StatusBadge } from '../components/StatusBadge'
 import { CubeView } from '../cube/CubeView'
-import type { MoveBatch } from '../cube/CubeView'
 import { FaceLegend } from '../cube/FaceLegend'
+import { ViewPresets } from '../cube/ViewPresets'
+import type { ViewRequest } from '../cube/viewControls'
+import { usePlayback, type Playback } from '../hooks/usePlayback'
 import { describeError } from '../lib/errors'
 import {
   formatDuration,
@@ -17,27 +16,28 @@ import {
   formatTokens,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
-import { Button } from '../ui/Button'
+import { Stat } from '../ui/Stat'
 import { Skeleton } from '../ui/Skeleton'
 
 export interface EpisodeViewProps {
   episode: Episode
   steps: Step[]
-  selected: number
-  onSelect: (index: number) => void
-  onPlayBatch: (stepIndex: number, moves: string[], state: CubeState) => void
+  playback: Playback
   cube: ReactNode
 }
+
+const chipCls = (active: boolean) =>
+  `rounded px-2 py-1 text-xs ${
+    active ? 'bg-accent-dim text-white' : 'bg-surface text-text'
+  }`
 
 export function EpisodeView({
   episode,
   steps,
-  selected,
-  onSelect,
-  onPlayBatch,
+  playback,
   cube,
 }: EpisodeViewProps) {
-  const step = selected >= 0 ? steps[selected] : null
+  const step = playback.active >= 0 ? steps[playback.active] : null
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
@@ -92,12 +92,8 @@ export function EpisodeView({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => onSelect(-1)}
-              className={`rounded px-2 py-1 text-xs ${
-                selected === -1
-                  ? 'bg-accent-dim text-white'
-                  : 'bg-surface text-text'
-              }`}
+              onClick={() => playback.select(-1)}
+              className={chipCls(playback.active === -1)}
             >
               初始局面
             </button>
@@ -106,12 +102,8 @@ export function EpisodeView({
                 key={item.id}
                 type="button"
                 data-testid="step-row"
-                onClick={() => onSelect(index)}
-                className={`rounded px-2 py-1 text-xs ${
-                  selected === index
-                    ? 'bg-accent-dim text-white'
-                    : 'bg-surface text-text'
-                }`}
+                onClick={() => playback.select(index)}
+                className={chipCls(playback.active === index)}
               >
                 #{item.seq} {item.kind}
                 {item.tool_name ? ` · ${item.tool_name}` : ''}
@@ -121,29 +113,20 @@ export function EpisodeView({
 
           {step && (
             <div className="space-y-2 border-t border-line pt-3">
-              <div className="text-text">
-                kind：{step.kind}
-                {step.tool_name ? ` · ${step.tool_name}` : ''}
+              <div className="grid grid-cols-2 gap-2">
+                <Stat
+                  label="kind"
+                  value={
+                    step.tool_name
+                      ? `${step.kind} · ${step.tool_name}`
+                      : step.kind
+                  }
+                />
+                <Stat
+                  label="参照长度"
+                  value={String(step.reference_length_after ?? '—')}
+                />
               </div>
-              <div className="text-text-dim">
-                参照长度：{step.reference_length_after ?? '—'}
-              </div>
-              {Array.isArray(step.result?.applied) &&
-                step.result.applied.length > 0 &&
-                step.state && (
-                  <Button
-                    type="button"
-                    onClick={() =>
-                      onPlayBatch(
-                        selected,
-                        step.result!.applied as string[],
-                        step.state!,
-                      )
-                    }
-                  >
-                    播放本步
-                  </Button>
-                )}
               <details>
                 <summary className="cursor-pointer text-xs text-text-dim">
                   参数
@@ -175,6 +158,8 @@ export function EpisodeView({
           )}
         </aside>
       </div>
+
+      <PlayerBar playback={playback} steps={steps} />
     </div>
   )
 }
@@ -185,9 +170,15 @@ export default function EpisodePage() {
   const stepsQuery = useSteps(id)
   const runQuery = useRun(episodeQuery.data?.run_id)
   const benchmarkQuery = useBenchmark(runQuery.data?.run.benchmark_id)
-  const [selected, setSelected] = useState(-1)
-  const [batch, setBatch] = useState<MoveBatch | null>(null)
-  const [resetToken, setResetToken] = useState(1)
+  const [viewRequest, setViewRequest] = useState<ViewRequest | null>(null)
+
+  const episode = episodeQuery.data
+  const steps = stepsQuery.data ?? []
+  const task = benchmarkQuery.data?.tasks.find(
+    (item) => item.id === episode?.task_key,
+  )
+  // usePlayback 是 hook，必须在早退 return 之前调用；数据未到时 steps 为空数组。
+  const playback = usePlayback(steps, task?.state ?? null)
 
   // 先看错误再看 loading：run/benchmark 依赖上游数据，上游失败时它们会一直 pending。
   const failure =
@@ -212,54 +203,32 @@ export default function EpisodePage() {
       </div>
     )
   }
-  const episode = episodeQuery.data
-  const steps = stepsQuery.data ?? []
   if (!episode) return null
-  const task = benchmarkQuery.data?.tasks.find(
-    (item) => item.id === episode.task_key,
-  )
-  // 选中步没有落库局面时，回退到它之前最近一个有局面的步骤，再回退到题初始局面。
-  function stateFor(index: number): CubeState | null {
-    for (let cursor = index; cursor >= 0; cursor -= 1) {
-      const candidate = steps[cursor]?.state
-      if (candidate) return candidate
-    }
-    return task?.state ?? null
-  }
-  const state = stateFor(selected)
-
-  function select(index: number) {
-    setSelected(index)
-    setBatch(null)
-    setResetToken((current) => current + 1)
-  }
-
-  function playBatch(
-    stepIndex: number,
-    moves: string[],
-    finalState: CubeState,
-  ) {
-    setSelected(Math.max(-1, stepIndex - 1))
-    setResetToken((current) => current + 1)
-    setBatch({ eventId: Date.now(), moves, state: finalState })
-  }
 
   return (
     <EpisodeView
       episode={episode}
       steps={steps}
-      selected={selected}
-      onSelect={select}
-      onPlayBatch={playBatch}
+      playback={playback}
       cube={
         <div className="relative">
           <CubeView
-            state={state}
-            resetToken={resetToken}
-            batch={batch}
-            speed={1}
+            state={playback.viewState}
+            resetToken={playback.resetToken}
+            batch={playback.batch}
+            speed={playback.speed}
             paused={false}
             skipToken={0}
+            viewRequest={viewRequest ?? undefined}
+            onBatchComplete={playback.handleBatchComplete}
+          />
+          <ViewPresets
+            onRequest={(preset) =>
+              setViewRequest((current) => ({
+                preset,
+                token: (current?.token ?? 0) + 1,
+              }))
+            }
           />
           <FaceLegend />
         </div>

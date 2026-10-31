@@ -1,8 +1,13 @@
-import { render, screen } from '@testing-library/react'
+import {
+  act,
+  render,
+  screen,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Playback } from '../hooks/usePlayback'
 import type {
   BenchmarkDetail,
   CubeState,
@@ -27,6 +32,25 @@ vi.mock('../cube/CubeView', () => ({
     />
   ),
 }))
+
+function playbackStub(overrides: Partial<Playback> = {}): Playback {
+  return {
+    active: 1,
+    playing: false,
+    speed: 1,
+    viewState: null,
+    batch: null,
+    resetToken: 1,
+    select: vi.fn(),
+    play: vi.fn(),
+    pause: vi.fn(),
+    stepPrev: vi.fn(),
+    stepNext: vi.fn(),
+    setSpeed: vi.fn(),
+    handleBatchComplete: vi.fn(),
+    ...overrides,
+  }
+}
 
 const state: CubeState = {
   cube: '2x2',
@@ -157,18 +181,15 @@ function renderEpisodePage(id: string) {
 }
 
 describe('EpisodeView', () => {
-  it('lists steps, selects one and plays its moves', async () => {
+  it('lists steps, syncs chip clicks and shows the player bar', async () => {
     const user = userEvent.setup()
-    const onSelect = vi.fn()
-    const onPlayBatch = vi.fn()
+    const playback = playbackStub()
     render(
       <MemoryRouter>
         <EpisodeView
           episode={episode}
           steps={steps}
-          selected={1}
-          onSelect={onSelect}
-          onPlayBatch={onPlayBatch}
+          playback={playback}
           cube={<div data-testid="cube-stub" />}
         />
       </MemoryRouter>,
@@ -179,16 +200,18 @@ describe('EpisodeView', () => {
       'model_message',
     )
     await user.click(screen.getAllByTestId('step-row')[1])
-    expect(onSelect).toHaveBeenCalledWith(1)
-    await user.click(
-      screen.getByRole('button', { name: '播放本步' }),
+    expect(playback.select).toHaveBeenCalledWith(1)
+    expect(
+      screen.getByRole('button', { name: '播放' }),
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('playback-position')).toHaveTextContent(
+      '#1 tool_result',
     )
-    expect(onPlayBatch).toHaveBeenCalledWith(1, ["R'"], state)
   })
 })
 
 describe('EpisodePage', () => {
-  it("plays a step's moves from its previous state", async () => {
+  it('播放器从选中步起播（吸附起点后播放本步走法）', async () => {
     const user = userEvent.setup()
     vi.stubGlobal(
       'fetch',
@@ -208,14 +231,35 @@ describe('EpisodePage', () => {
     const before = Number(
       screen.getByTestId('cube-stub').getAttribute('data-token'),
     )
-    await user.click(
-      screen.getByRole('button', { name: '播放本步' }),
-    )
+    await user.click(screen.getByRole('button', { name: '播放' }))
     const cube = screen.getByTestId('cube-stub')
     expect(cube).toHaveAttribute('data-moves', "R'")
-    expect(
-      Number(cube.getAttribute('data-token')),
-    ).toBe(before + 1)
+    expect(Number(cube.getAttribute('data-token'))).toBe(before + 1)
+  })
+
+  it('键盘 ←/→ 步进吸附', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/episodes/e1') return jsonResponse(episode)
+        if (input === '/api/episodes/e1/steps') return jsonResponse(steps)
+        if (input === '/api/runs/r1') {
+          return jsonResponse({ run, episodes: [episode] })
+        }
+        if (input === '/api/benchmarks/b1') return jsonResponse(benchmark)
+        return jsonResponse({ detail: 'not found' }, 404)
+      }),
+    )
+    renderEpisodePage('e1')
+    await screen.findAllByTestId('step-row')
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowRight' }),
+      )
+    })
+    expect(screen.getByTestId('playback-position')).toHaveTextContent(
+      '#0 model_message',
+    )
   })
 
   it('model_message 步骤展示思考块', async () => {
