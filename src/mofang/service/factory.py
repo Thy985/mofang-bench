@@ -44,10 +44,19 @@ def build_adapter(
             "no API key configured: save one on the provider "
             "or set its environment variable"
         )
+    # params 是用户输入边界：retry_delay 只接受正数，坏值回落默认，
+    # 避免一个手误让所有 run 在构造 adapter 时崩掉。
+    try:
+        retry_delay = float(record.params.get("retry_delay", 1.0))
+    except (TypeError, ValueError):
+        retry_delay = 1.0
+    if not retry_delay > 0:
+        retry_delay = 1.0
     return OpenAICompatibleAdapter(
         base_url=record.base_url,
         api_key=key,
         model=record.model,
+        retry_delay=retry_delay,
         stream=bool(record.params.get("stream", True)),
     )
 

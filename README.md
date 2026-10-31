@@ -71,6 +71,10 @@ provider 参数里设 `"stream": false`。注意不要把 `stream` 放进 provid
 `params.extra`，否则会与 provider 级 stream 开关脱同步；网关的流式怪癖
 一律用 params 级 `"stream": false` 或 `params.extra` 里的其他参数兜底。
 
+限流网关（429 后 reset 窗口较长）可在 provider 参数里调大重试退避：
+`"retry_delay": 12`（秒，默认 1，只接受正数）。4 次尝试共退避
+`retry_delay × (1+2+4)`，例如 12s 可跨过 ~84s 的限流窗口。
+
 ## 本地 API
 
 ```bash

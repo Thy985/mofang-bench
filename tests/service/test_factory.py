@@ -109,6 +109,58 @@ def test_build_adapter_stream_off_from_params(tmp_path: Path) -> None:
     assert adapter.stream is False
 
 
+def test_build_adapter_retry_delay_from_params(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    record = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+        params={"retry_delay": 12},
+    )
+    adapter = build_adapter(record, env={"KEY": "k"})
+    assert adapter.retry_delay == 12.0
+
+
+def test_build_adapter_retry_delay_default_and_invalid(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    default = create_provider(
+        db,
+        name="p",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+    )
+    assert build_adapter(default, env={"KEY": "k"}).retry_delay == 1.0
+
+    bad = create_provider(
+        db,
+        name="p2",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+        params={"retry_delay": "not-a-number"},
+    )
+    assert build_adapter(bad, env={"KEY": "k"}).retry_delay == 1.0
+
+    negative = create_provider(
+        db,
+        name="p3",
+        base_url="http://localhost:1/v1",
+        model="m",
+        api_key_ref="KEY",
+        api_key="k",
+        params={"retry_delay": -3},
+    )
+    assert build_adapter(negative, env={"KEY": "k"}).retry_delay == 1.0
+
+
 def test_budget_defaults_and_overrides() -> None:
     assert budget_for("2x2", {}).max_moves == 30
     assert budget_for("2x2", {}).max_seconds == 300.0
