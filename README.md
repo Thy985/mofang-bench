@@ -171,6 +171,13 @@ U2 观测体验已落地：Run live 面板重组为 Stat 卡组（motion 数字�
 prefers-reduced-motion）；Episode 回放升级为播放器——连播（播完自动进下
 一步）、scrubber 拖动选步、`←`/`→` 步进、空格播放/暂停。
 
+U3 操作流反馈已落地：全部 mutation 接入 toast（4 秒自动消失，错误经
+`toastError` 统一归因）；Providers/Benchmarks/New Run 三张表单改为字段级
+校验（提交时全显、输入即清、聚焦首个错误字段）；三处列表空态接入
+EmptyState 引导；四数据页与详情页加载态统一 PageSkeleton（table / cards /
+form 三种变体）；Input·Textarea·Select 已改为恒定 wrapper（错误显隐不再
+替换 DOM）。
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有

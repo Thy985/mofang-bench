@@ -515,8 +515,7 @@ describe('RunPage', () => {
   it('取消成功出「已取消」toast', async () => {
     renderPage({ snapshotState: null })
     const user = userEvent.setup()
-    // renderPage 的 mock run 为 running，RunLivePanel 的取消按钮文案是「取消 run」；
-    // 数据异步加载，首帧停在骨架屏，用 findByRole 等按钮出现。
+    // mock run 为 running、按钮文案是「取消 run」；首帧停在骨架屏，用 findByRole 等按钮出现。
     const cancelBtn = await screen.findByRole('button', {
       name: '取消 run',
     })

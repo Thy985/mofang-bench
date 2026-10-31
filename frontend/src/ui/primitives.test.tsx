@@ -86,9 +86,14 @@ describe('Input / Textarea', () => {
 })
 
 describe('Input label/error', () => {
-  it('renders bare input when no label and no error', () => {
+  // 恒定 wrapper（与 Select 同一裁决）：无 label/error 时也渲染包裹 div，
+  // error 出现/消失不增删这层 div，避免 React 替换 input DOM 导致焦点丢失。
+  it('always renders a wrapper even without label or error', () => {
     render(<Input aria-label="q" />)
-    expect(screen.getByLabelText('q').tagName).toBe('INPUT')
+    const input = screen.getByLabelText('q')
+    expect(input.tagName).toBe('INPUT')
+    expect(input.closest('div')).not.toBeNull()
+    expect(input).not.toHaveAttribute('aria-invalid')
   })
 
   it('wraps with label and error text and sets aria-invalid', () => {

@@ -13,6 +13,7 @@ test('provider → benchmark → live run → result → replay', async ({
     .getByLabel('API key（可选，保存后不回显）')
     .fill('test')
   await page.getByRole('button', { name: '保存 provider' }).click()
+  await expect(page.getByTestId('toast')).toHaveText('Provider 已创建')
   await expect(page.getByTestId('provider-card')).toContainText('mock')
   await expect(page.getByTestId('key-configured')).toContainText(
     'key 已保存',

@@ -245,9 +245,8 @@ describe('BenchmarksView', () => {
     expect(screen.getByText('还没有基准集')).toBeInTheDocument()
   })
 
-  // required/min/step 挡得住留空与越界（jsdom 会拦下 submit 事件），但 type=number
-  // 把无法解析的输入净化成空串：清空与“输入字母”是同一条路径，Number('') 是 0，
-  // 会静默生成 0 题或改掉 id 里的 seed，所以只能在这里拦。
+  // required/min/step 挡得住留空与越界（jsdom 会拦下 submit 事件）；type=number
+  // 输入无法解析的字符时 React 会还原原值（不会净化成空串），非法值用例统一先 clear 再断言字段错误。
   it.each([
     ['名称含斜杠', '名称', 'a/b', '名称不能包含 / # ?'],
     ['名称含井号', '名称', 'a#b', '名称不能包含 / # ?'],

@@ -38,8 +38,8 @@ import { Alert } from '../ui/Alert'
 import { AnimatedNumber } from '../ui/AnimatedNumber'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
-import { Skeleton } from '../ui/Skeleton'
 import { Stat } from '../ui/Stat'
 import { useToast } from '../ui/Toast'
 import { toastError } from '../ui/toastError'
@@ -257,13 +257,7 @@ export default function RunPage() {
 
   if (!id) return null
   if (runQuery.isPending) {
-    return (
-      <div aria-busy="true" className="space-y-2">
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-      </div>
-    )
+    return <PageSkeleton variant="form" fields={4} />
   }
   if (runQuery.error) {
     return <Alert tone="danger">{describeError(runQuery.error)}</Alert>
