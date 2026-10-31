@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import type { AggregateReport, CubeState, RunEvent } from '../api/types'
+import type {
+  AggregateReport,
+  CubeState,
+  Episode,
+  RunEvent,
+} from '../api/types'
 import { makeEpisode, makeRun } from '../test/fixtures'
 import {
+  derivePhase,
   initialLiveState,
   liveReducer,
   type LiveAction,
@@ -425,3 +431,82 @@ function stateAfterSnapshot() {
     reset: true,
   })
 }
+
+// —— derivePhase ——（以下为新增 describe，fixture 自包含）
+
+const phaseEpisode = (status: Episode['status']): Episode => ({
+  id: 'e1',
+  run_id: 'r1',
+  task_id: 'b1:t1',
+  task_key: 't1',
+  status,
+  solved: false,
+  moves_used: 0,
+  reference_length: 3,
+  efficiency: null,
+  progress_ratio: null,
+  protocol_errors: 0,
+  tokens_in: 0,
+  tokens_out: 0,
+  latency_ms: null,
+  failure_code: null,
+  error: null,
+  started_at: '2026-10-31T00:00:00+00:00',
+  finished_at: null,
+})
+
+describe('derivePhase', () => {
+  it('无当前题时为 queued', () => {
+    expect(derivePhase(initialLiveState())).toBe('queued')
+  })
+
+  it('当前题结束时为 done（优先于日志尾的工具事件）', () => {
+    expect(
+      derivePhase({
+        ...initialLiveState(),
+        currentEpisode: phaseEpisode('solved'),
+        logs: [{ id: 1, kind: 'tool', text: 'apply_moves', data: {} }],
+      }),
+    ).toBe('done')
+  })
+
+  it('thinking 时为 thinking（优先于日志尾）', () => {
+    expect(
+      derivePhase({
+        ...initialLiveState(),
+        currentEpisode: phaseEpisode('running'),
+        thinking: true,
+        logs: [{ id: 1, kind: 'tool', text: 'apply_moves', data: {} }],
+      }),
+    ).toBe('thinking')
+  })
+
+  it('日志尾部为工具事件时为 tooling', () => {
+    expect(
+      derivePhase({
+        ...initialLiveState(),
+        currentEpisode: phaseEpisode('running'),
+        logs: [{ id: 1, kind: 'tool', text: 'apply_moves → ok', data: {} }],
+      }),
+    ).toBe('tooling')
+  })
+
+  it('模型消息落定后（无工具在途）回到 thinking', () => {
+    expect(
+      derivePhase({
+        ...initialLiveState(),
+        currentEpisode: phaseEpisode('running'),
+        logs: [{ id: 1, kind: 'model', text: '回答', data: {} }],
+      }),
+    ).toBe('thinking')
+  })
+
+  it('running 且无日志无 thinking 时为 thinking（等待下一 turn）', () => {
+    expect(
+      derivePhase({
+        ...initialLiveState(),
+        currentEpisode: phaseEpisode('running'),
+      }),
+    ).toBe('thinking')
+  })
+})

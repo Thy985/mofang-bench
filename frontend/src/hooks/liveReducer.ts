@@ -321,3 +321,16 @@ export function liveReducer(
       return next
   }
 }
+
+export type Phase = 'queued' | 'thinking' | 'tooling' | 'done'
+
+// 判定顺序有讲究：done 必须先于日志尾判断——题结束时最后一个事件是
+// tool.result，若先看日志尾会把已完成的题显示成「工具」。
+export function derivePhase(live: LiveState): Phase {
+  if (!live.currentEpisode) return 'queued'
+  if (live.currentEpisode.status !== 'running') return 'done'
+  if (live.thinking) return 'thinking'
+  const last = live.logs.at(-1)
+  if (last && last.kind === 'tool') return 'tooling'
+  return 'thinking'
+}
