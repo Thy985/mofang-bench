@@ -1,6 +1,5 @@
 import type {
   HTMLAttributes,
-  HTMLTableRowElement,
   ThHTMLAttributes,
   TdHTMLAttributes,
 } from 'react'
