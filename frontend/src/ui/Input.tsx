@@ -20,7 +20,8 @@ export function Input({
       {...rest}
     />
   )
-  if (!label && !error) return field
+  // wrapper 结构保持稳定（error 出现/消失不增删这层 div），
+  // 否则 React 会替换 input DOM 节点，聚焦与连续输入都会被打断。
   return (
     <div className="space-y-1">
       {label && (

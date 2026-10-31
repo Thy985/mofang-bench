@@ -1,9 +1,15 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import type { Provider } from '../api/types'
-import { ProvidersView } from './ProvidersPage'
+import { ToastProvider } from '../ui/Toast'
+import ProvidersPage, { ProvidersView } from './ProvidersPage'
+
+// focusFirstError 会调 scrollIntoView，jsdom 未实现，桩成 no-op。
+Element.prototype.scrollIntoView = vi.fn()
 
 const provider: Provider = {
   id: 'p1',
@@ -38,6 +44,51 @@ function renderView(
   const utils = render(<ProvidersView {...props} />)
   return { ...utils, props }
 }
+
+describe('ProvidersView field errors', () => {
+  it('提交时全显所有字段错误并聚焦第一个错误字段', async () => {
+    const user = userEvent.setup()
+    renderView({ providers: [] })
+    // jsdom 30 会在提交时执行 required 约束校验，先填名称/模型再触发提交。
+    await user.type(screen.getByLabelText('名称'), 'local')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    const baseUrl = screen.getByLabelText('base_url')
+    await user.clear(baseUrl)
+    await user.clear(screen.getByLabelText('max_tokens'))
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(screen.getByText('base_url 必须是 http(s)')).toBeInTheDocument()
+    expect(screen.getByText('max_tokens 必须是正整数')).toBeInTheDocument()
+    expect(
+      screen.getByText('API key 与环境变量名至少填一个'),
+    ).toBeInTheDocument()
+    // 展示错误后 label 文本混入错误文案，getByLabelText 精确匹配会落空；
+    // 用前面捕获的同一 DOM 节点断言聚焦（wrapper 稳定，节点不换）。
+    expect(document.activeElement).toBe(baseUrl)
+  })
+
+  it('输入即清：修正字段后该字段错误消失，其余保留', async () => {
+    const user = userEvent.setup()
+    renderView({ providers: [] })
+    await user.type(screen.getByLabelText('名称'), 'local')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    const baseUrl = screen.getByLabelText('base_url')
+    await user.clear(baseUrl)
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(screen.getByText('base_url 必须是 http(s)')).toBeInTheDocument()
+    await user.type(baseUrl, 'http://localhost/v1')
+    expect(
+      screen.queryByText('base_url 必须是 http(s)'),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('API key 与环境变量名至少填一个'),
+    ).toBeInTheDocument()
+  })
+
+  it('空列表渲染 EmptyState 引导', () => {
+    renderView({ providers: [] })
+    expect(screen.getByText('还没有 provider')).toBeInTheDocument()
+  })
+})
 
 describe('ProvidersView', () => {
   it('creates a provider with a stored key and parsed params', async () => {
@@ -93,9 +144,10 @@ describe('ProvidersView', () => {
     await user.type(screen.getByLabelText('名称'), 'local')
     await user.type(screen.getByLabelText('模型'), 'gpt-oss')
     await user.click(screen.getByRole('button', { name: '保存 provider' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'API key 与环境变量名至少填一个',
-    )
+    // formError 通道已删除：字段校验错误现在经 Input 内建 error 文案常驻展示。
+    expect(
+      await screen.findByText('API key 与环境变量名至少填一个'),
+    ).toBeInTheDocument()
     expect(props.onCreate).not.toHaveBeenCalled()
   })
 
@@ -153,9 +205,8 @@ describe('ProvidersView', () => {
     await user.type(screen.getByLabelText('名称'), 'x')
     await user.type(screen.getByLabelText('模型'), 'm')
     await user.click(screen.getByRole('button', { name: '保存 provider' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'base_url 必须是 http(s)',
-    )
+    // formError 通道已删除：改为断言 base_url 字段错误文案。
+    expect(await screen.findByText('base_url 必须是 http(s)')).toBeInTheDocument()
     expect(props.onCreate).not.toHaveBeenCalled()
   })
 
@@ -191,12 +242,13 @@ describe('ProvidersView', () => {
       await user.clear(field)
       if (value !== '') await user.type(field, value)
       await user.click(screen.getByRole('button', { name: '保存 provider' }))
-      expect(await screen.findByRole('alert')).toHaveTextContent(expected)
+      // formError 通道已删除：改为断言对应字段的错误文案。
+      expect(await screen.findByText(expected)).toBeInTheDocument()
       expect(props.onCreate).not.toHaveBeenCalled()
     },
   )
 
-  it('maps a backend 400 on create to Chinese plus the detail', async () => {
+  it('View 吞掉提交失败：不设 formError，反馈走页面层 toast', async () => {
     const user = userEvent.setup()
     const onCreate = vi
       .fn()
@@ -209,9 +261,10 @@ describe('ProvidersView', () => {
       'sk-test',
     )
     await user.click(screen.getByRole('button', { name: '保存 provider' }))
-    const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('请求不合法（HTTP 400）')
-    expect(alert).toHaveTextContent('base_url must be http(s)')
+    await waitFor(() => expect(onCreate).toHaveBeenCalled())
+    // 决策 ①：提交类失败在 View 层 catch 吞掉，页面级 toast 负责反馈；
+    // 表单区不再出现 role="alert"。
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('unwraps the 502 dict detail when probe fails upstream', async () => {
@@ -288,5 +341,115 @@ describe('ProvidersView', () => {
     expect(screen.getByTestId('probe-error')).toHaveTextContent(
       'connection refused',
     )
+  })
+})
+
+describe('ProvidersPage toast', () => {
+  function renderPage() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    return render(
+      <QueryClientProvider client={client}>
+        <ToastProvider>
+          <MemoryRouter>
+            <ProvidersPage />
+          </MemoryRouter>
+        </ToastProvider>
+      </QueryClientProvider>,
+    )
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('创建成功出成功 toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? {
+            ok: true,
+            status: 201,
+            statusText: 'Created',
+            json: async () => ({
+              id: 'p1',
+              name: 'n',
+              base_url: 'u',
+              model: 'm',
+              api_key_ref: '',
+              params: {},
+              key_configured: false,
+              key_stored: false,
+              created_at: '2026-10-31T00:00:00+00:00',
+            }),
+          }
+        : { ok: true, status: 200, statusText: 'OK', json: async () => [] },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'n')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    await user.type(
+      screen.getByLabelText('API key（可选，保存后不回显）'),
+      'k',
+    )
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Provider 已创建',
+    )
+  })
+
+  it('创建失败经 toastError 出错误 toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? {
+            ok: false,
+            status: 500,
+            statusText: 'Internal Server Error',
+            json: async () => ({ detail: 'boom' }),
+          }
+        : { ok: true, status: 200, statusText: 'OK', json: async () => [] },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'n')
+    await user.type(screen.getByLabelText('模型'), 'm')
+    await user.type(
+      screen.getByLabelText('API key（可选，保存后不回显）'),
+      'k',
+    )
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    const toast = await screen.findByRole('alert')
+    expect(toast).toHaveTextContent('boom')
+  })
+
+  // 迁移自旧 View 级用例「maps a backend 400 on create to Chinese plus the detail」：
+  // 提交失败断言改到页面级 toast 通道。
+  it('后端 400 经 toastError 出中文转译 + detail 的错误 toast', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === 'POST'
+        ? {
+            ok: false,
+            status: 400,
+            statusText: 'Bad Request',
+            json: async () => ({ detail: 'base_url must be http(s)' }),
+          }
+        : { ok: true, status: 200, statusText: 'OK', json: async () => [] },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    renderPage()
+    await user.type(screen.getByLabelText('名称'), 'local')
+    await user.type(screen.getByLabelText('模型'), 'gpt-oss')
+    await user.type(
+      screen.getByLabelText('API key（可选，保存后不回显）'),
+      'sk-test',
+    )
+    await user.click(screen.getByRole('button', { name: '保存 provider' }))
+    const toast = await screen.findByRole('alert')
+    expect(toast).toHaveTextContent('请求不合法（HTTP 400）')
+    expect(toast).toHaveTextContent('base_url must be http(s)')
   })
 })

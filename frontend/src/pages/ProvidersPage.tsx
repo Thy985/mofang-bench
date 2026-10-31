@@ -12,10 +12,30 @@ import type {
 } from '../api/types'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { EmptyState } from '../ui/EmptyState'
 import { Input } from '../ui/Input'
-import { Skeleton } from '../ui/Skeleton'
-import { Spinner } from '../ui/Spinner'
+import { PageSkeleton } from '../ui/PageSkeleton'
 import { Textarea } from '../ui/Textarea'
+import { useToast } from '../ui/Toast'
+import { toastError } from '../ui/toastError'
+
+const FIELD_IDS: Record<string, string> = {
+  base_url: 'provider-base-url',
+  max_tokens: 'provider-max-tokens',
+  temperature: 'provider-temperature',
+  extra: 'provider-extra',
+  api_key: 'provider-api-key',
+}
+const FIELD_ORDER = ['base_url', 'max_tokens', 'temperature', 'extra', 'api_key']
+
+function focusFirstError(errors: Record<string, string>) {
+  const key = FIELD_ORDER.find((k) => errors[k])
+  if (!key) return
+  const el = document.getElementById(FIELD_IDS[key])
+  if (!el) return
+  el.focus()
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 
 const initialForm = {
   name: '',
@@ -48,7 +68,7 @@ export function ProvidersView({
   onClearKey,
 }: ProvidersViewProps) {
   const [form, setForm] = useState(initialForm)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [probes, setProbes] = useState<
     Record<string, { kind: string | null; text: string }>
@@ -58,44 +78,54 @@ export function ProvidersView({
 
   function update(key: keyof typeof initialForm, value: string) {
     setForm((current) => ({ ...current, [key]: value }))
+    setFieldErrors((current) => {
+      if (!(key in current)) return current
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    setFormError(null)
+    const errors: Record<string, string> = {}
     if (
       !form.base_url.startsWith('http://') &&
       !form.base_url.startsWith('https://')
     ) {
-      setFormError('base_url 必须是 http(s)')
-      return
+      errors.base_url = 'base_url 必须是 http(s)'
     }
     const maxTokens = readPositiveInt(form.max_tokens)
     if (maxTokens === null) {
-      setFormError('max_tokens 必须是正整数')
-      return
+      errors.max_tokens = 'max_tokens 必须是正整数'
     }
     const temperature = readNumberInRange(form.temperature, 0, 2)
     if (temperature === null) {
-      setFormError('temperature 必须是 0 到 2 之间的数值')
-      return
+      errors.temperature = 'temperature 必须是 0 到 2 之间的数值'
     }
-    let extra: Record<string, unknown>
+    let extra: Record<string, unknown> = {}
     try {
       const parsed: unknown = JSON.parse(form.extra || '{}')
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setFormError('extra 必须是 JSON 对象')
-        return
+        errors.extra = 'extra 必须是 JSON 对象'
+      } else {
+        extra = parsed as Record<string, unknown>
       }
-      extra = parsed as Record<string, unknown>
     } catch {
-      setFormError('extra 必须是合法 JSON')
-      return
+      errors.extra = 'extra 必须是合法 JSON'
     }
     const apiKey = form.api_key.trim()
     const apiKeyRef = form.api_key_ref.trim()
     if (!apiKey && !apiKeyRef) {
-      setFormError('API key 与环境变量名至少填一个')
+      errors.api_key = 'API key 与环境变量名至少填一个'
+    }
+    setFieldErrors(errors)
+    if (
+      Object.keys(errors).length > 0 ||
+      maxTokens === null ||
+      temperature === null
+    ) {
+      focusFirstError(errors)
       return
     }
     setSubmitting(true)
@@ -113,8 +143,9 @@ export function ProvidersView({
         },
       })
       setForm(initialForm)
-    } catch (err) {
-      setFormError(describeError(err))
+      setFieldErrors({})
+    } catch {
+      // 提交失败反馈走页面层 toast（决策 ①），字段错误已常驻
     } finally {
       setSubmitting(false)
     }
@@ -176,6 +207,7 @@ export function ProvidersView({
         <label className="grid gap-1 text-sm">
           <span>名称</span>
           <Input
+            id="provider-name"
             value={form.name}
             onChange={(event) => update('name', event.target.value)}
             required
@@ -184,6 +216,7 @@ export function ProvidersView({
         <label className="grid gap-1 text-sm">
           <span>模型</span>
           <Input
+            id="provider-model"
             value={form.model}
             onChange={(event) => update('model', event.target.value)}
             required
@@ -192,23 +225,30 @@ export function ProvidersView({
         <label className="grid gap-1 text-sm md:col-span-2">
           <span>base_url</span>
           <Input
+            id="provider-base-url"
             value={form.base_url}
             onChange={(event) => update('base_url', event.target.value)}
-            required
+            error={fieldErrors.base_url}
+            // 不加 required：原生的 required 会拦截空 base_url 的提交
+            // （浏览器/jsdom 都先于 onSubmit 跑约束校验），
+            // 字段级校验"errors.base_url"就永远走不到；空值由校验器兜底。
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>API key（可选，保存后不回显）</span>
           <Input
+            id="provider-api-key"
             type="password"
             autoComplete="off"
             value={form.api_key}
             onChange={(event) => update('api_key', event.target.value)}
+            error={fieldErrors.api_key}
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>API key 环境变量</span>
           <Input
+            id="provider-api-key-ref"
             value={form.api_key_ref}
             onChange={(event) =>
               update('api_key_ref', event.target.value)
@@ -219,58 +259,55 @@ export function ProvidersView({
         <label className="grid gap-1 text-sm">
           <span>temperature</span>
           <Input
+            id="provider-temperature"
             type="number"
             step="0.1"
             value={form.temperature}
             onChange={(event) =>
               update('temperature', event.target.value)
             }
+            error={fieldErrors.temperature}
           />
         </label>
         <label className="grid gap-1 text-sm">
           <span>max_tokens</span>
           <Input
+            id="provider-max-tokens"
             type="number"
             value={form.max_tokens}
             onChange={(event) =>
               update('max_tokens', event.target.value)
             }
+            error={fieldErrors.max_tokens}
           />
         </label>
         <label className="grid gap-1 text-sm md:col-span-2">
           <span>extra JSON</span>
           <Textarea
+            id="provider-extra"
             className="font-mono text-xs"
             rows={2}
             value={form.extra}
             onChange={(event) => update('extra', event.target.value)}
+            error={fieldErrors.extra}
           />
         </label>
         <div className="flex items-center gap-3 md:col-span-2">
-          <Button variant="primary" type="submit" disabled={submitting}>
-            {submitting && <Spinner aria-hidden className="mr-2 border-text-dim border-t-white" />}
+          <Button variant="primary" type="submit" loading={submitting}>
             保存 provider
           </Button>
-          {formError && (
-            <p role="alert" className="text-sm text-rose-300">
-              {formError}
-            </p>
-          )}
         </div>
       </form>
 
       {loading ? (
-        <div aria-busy="true" className="space-y-2">
-          <Skeleton className="h-4 w-1/3" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-5/6" />
-        </div>
+        <PageSkeleton variant="cards" count={2} />
       ) : providers.length === 0 ? (
         // 加载失败时只留错误横幅，不再叠一句“还没有 provider”的引导文案
         error ? null : (
-          <p className="text-sm text-text-dim">
-            还没有 provider。可在上方直接保存 API key，或用环境变量名回退。
-          </p>
+          <EmptyState
+            title="还没有 provider"
+            hint="可在上方表单直接保存 API key，或用环境变量名回退。"
+          />
         )
       ) : (
         <ul className="grid gap-3 md:grid-cols-2">
@@ -372,6 +409,7 @@ export function ProvidersView({
 
 export default function ProvidersPage() {
   const queryClient = useQueryClient()
+  const toast = useToast()
   const providers = useProviders()
   const create = useMutation({
     mutationFn: api.providers.create,
@@ -397,14 +435,39 @@ export default function ProvidersPage() {
       loading={providers.isPending}
       error={providers.error ? describeError(providers.error) : null}
       onCreate={async (payload) => {
-        await create.mutateAsync(payload)
+        try {
+          await create.mutateAsync(payload)
+          toast.success('Provider 已创建')
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
       }}
-      onProbe={async (id) => probe.mutateAsync(id)}
+      onProbe={async (id) => {
+        try {
+          return await probe.mutateAsync(id)
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
+      }}
       onSetKey={async (id, key) => {
-        await setKey.mutateAsync({ id, key })
+        try {
+          await setKey.mutateAsync({ id, key })
+          toast.success('API key 已保存')
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
       }}
       onClearKey={async (id) => {
-        await clearKey.mutateAsync(id)
+        try {
+          await clearKey.mutateAsync(id)
+          toast.success('API key 已清除')
+        } catch (err) {
+          toastError(toast, err)
+          throw err
+        }
       }}
     />
   )
