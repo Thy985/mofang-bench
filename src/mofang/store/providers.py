@@ -97,6 +97,54 @@ def set_provider_key(
     return get_provider(db, provider_id)
 
 
+def update_provider(
+    db: Database,
+    provider_id: str,
+    *,
+    name: str,
+    base_url: str,
+    model: str,
+    api_key_ref: str,
+    params: dict[str, Any] | None = None,
+) -> ProviderRecord | None:
+    # params 做浅合并而非整体替换：表单只暴露 temperature/max_tokens/extra，
+    # run 自动降级写入的 stream / retry_delay 等内部键要保留，避免一次编辑
+    # 把降级设置悄悄抹掉（否则每次 run 都要重新触发 4xx 降级）。
+    existing = get_provider(db, provider_id)
+    if existing is None:
+        return None
+    merged = dict(existing.params)
+    merged.update(params or {})
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE providers
+            SET name = ?, base_url = ?, model = ?, api_key_ref = ?,
+                params_json = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                base_url.rstrip("/"),
+                model,
+                api_key_ref,
+                json.dumps(merged, ensure_ascii=False),
+                provider_id,
+            ),
+        )
+    if cursor.rowcount == 0:
+        return None
+    return get_provider(db, provider_id)
+
+
+def delete_provider(db: Database, provider_id: str) -> bool:
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            "DELETE FROM providers WHERE id = ?", (provider_id,)
+        )
+    return cursor.rowcount > 0
+
+
 def set_provider_param(
     db: Database, provider_id: str, key: str, value: Any
 ) -> ProviderRecord | None:

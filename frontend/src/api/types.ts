@@ -46,6 +46,15 @@ export interface ProviderCreate {
   params: ProviderParams
 }
 
+// PUT /api/providers/:id 的载荷；key 走独立的 key 接口，不在编辑表单里。
+export interface ProviderUpdate {
+  name: string
+  base_url: string
+  model: string
+  api_key_ref: string
+  params: ProviderParams
+}
+
 export interface ProbeResult {
   ok: boolean
   tool_calling: boolean

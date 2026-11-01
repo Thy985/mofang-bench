@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
@@ -33,6 +33,8 @@ function renderView(
     loading: false,
     error: null as string | null,
     onCreate: vi.fn().mockResolvedValue(undefined),
+    onUpdate: vi.fn().mockResolvedValue(undefined),
+    onDelete: vi.fn().mockResolvedValue(undefined),
     onProbe: vi.fn().mockResolvedValue({
       ok: true,
       tool_calling: true,
@@ -329,6 +331,8 @@ describe('ProvidersView', () => {
         loading={false}
         error={null}
         onCreate={vi.fn()}
+        onUpdate={vi.fn().mockResolvedValue(undefined)}
+        onDelete={vi.fn().mockResolvedValue(undefined)}
         onProbe={onProbe}
         onSetKey={vi.fn().mockResolvedValue(undefined)}
         onClearKey={vi.fn().mockResolvedValue(undefined)}
@@ -341,6 +345,93 @@ describe('ProvidersView', () => {
     expect(screen.getByTestId('probe-error')).toHaveTextContent(
       'connection refused',
     )
+  })
+})
+
+describe('ProvidersView edit & delete', () => {
+  it('编辑预填表单并在保存时提交更新载荷', async () => {
+    const user = userEvent.setup()
+    const { props } = renderView({ providers: [provider] })
+    await user.click(screen.getByTestId('provider-edit'))
+    const editForm = screen.getByTestId('provider-edit-form')
+    expect(editForm).toBeInTheDocument()
+    // 编辑表单不出现 key 字段，key 走卡片的「设置/更换 key」
+    expect(
+      within(editForm).queryByLabelText(/API key（可选/),
+    ).not.toBeInTheDocument()
+    expect(within(editForm).getByLabelText('名称')).toHaveValue('local')
+    await user.clear(within(editForm).getByLabelText('名称'))
+    await user.type(within(editForm).getByLabelText('名称'), 'renamed')
+    await user.click(
+      within(editForm).getByRole('button', { name: '保存修改' }),
+    )
+    expect(props.onUpdate).toHaveBeenCalledWith('p1', {
+      name: 'renamed',
+      base_url: 'http://localhost:20128/v1',
+      model: 'gpt-oss',
+      api_key_ref: 'OPENAI_API_KEY',
+      params: { temperature: 0, max_tokens: 4096, extra: {} },
+    })
+  })
+
+  it('保存成功后关闭编辑表单；取消也不发请求', async () => {
+    const user = userEvent.setup()
+    const { props } = renderView({ providers: [provider] })
+    await user.click(screen.getByTestId('provider-edit'))
+    await user.click(
+      within(screen.getByTestId('provider-edit-form')).getByRole('button', {
+        name: '取消',
+      }),
+    )
+    expect(
+      screen.queryByTestId('provider-edit-form'),
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('provider-edit'))
+    await user.click(
+      within(screen.getByTestId('provider-edit-form')).getByRole('button', {
+        name: '保存修改',
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.queryByTestId('provider-edit-form')).not.toBeInTheDocument(),
+    )
+    expect(props.onUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it('编辑字段校验失败时不发请求', async () => {
+    const user = userEvent.setup()
+    const { props } = renderView({ providers: [provider] })
+    await user.click(screen.getByTestId('provider-edit'))
+    const editForm = screen.getByTestId('provider-edit-form')
+    await user.clear(within(editForm).getByLabelText('max_tokens'))
+    await user.click(
+      within(editForm).getByRole('button', { name: '保存修改' }),
+    )
+    expect(
+      await screen.findByText('max_tokens 必须是正整数'),
+    ).toBeInTheDocument()
+    expect(props.onUpdate).not.toHaveBeenCalled()
+  })
+
+  it('删除需二次确认，确认后才调用 onDelete', async () => {
+    const user = userEvent.setup()
+    const { props } = renderView({ providers: [provider] })
+    await user.click(screen.getByTestId('provider-delete'))
+    // 第一次点击只出现确认按钮，不删除
+    expect(props.onDelete).not.toHaveBeenCalled()
+    await user.click(screen.getByTestId('provider-delete-confirm'))
+    expect(props.onDelete).toHaveBeenCalledWith('p1')
+  })
+
+  it('取消二次确认回到普通态', async () => {
+    const user = userEvent.setup()
+    const { props } = renderView({ providers: [provider] })
+    await user.click(screen.getByTestId('provider-delete'))
+    await user.click(screen.getByRole('button', { name: '取消' }))
+    expect(
+      screen.queryByTestId('provider-delete-confirm'),
+    ).not.toBeInTheDocument()
+    expect(props.onDelete).not.toHaveBeenCalled()
   })
 })
 

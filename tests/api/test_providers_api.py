@@ -1,8 +1,13 @@
 from fastapi.testclient import TestClient
 
 from mofang.api.app import create_app
+from mofang.cube.moves import apply_moves
+from mofang.cube.state import CubeState
 from mofang.models.provider import FakeProvider
+from mofang.store.benchmarks import save_benchmark
 from mofang.store.db import Database
+from mofang.store.runs import create_run
+from mofang.tasks.models import Benchmark, Task
 
 
 def make_client(tmp_path, provider_factory=None):
@@ -155,3 +160,135 @@ def test_probe_uses_stored_key(tmp_path) -> None:
             f"/api/providers/{created['id']}/probe"
         ).status_code == 200
         assert seen[0].api_key == "sk-secret"
+
+
+def test_update_provider(tmp_path) -> None:
+    client, db = make_client(tmp_path)
+    with client:
+        created = client.post(
+            "/api/providers",
+            json={
+                "name": "local",
+                "base_url": "http://localhost:1/v1",
+                "model": "m",
+                "api_key": "sk-secret",
+                "params": {"temperature": 0.5, "stream": False},
+            },
+        ).json()
+        response = client.put(
+            f"/api/providers/{created['id']}",
+            json={
+                "name": "renamed",
+                "base_url": "http://localhost:2/v1",
+                "model": "m2",
+                "api_key_ref": "REF",
+                "params": {"temperature": 0.9},
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name"] == "renamed"
+        assert body["model"] == "m2"
+        assert body["api_key_ref"] == "REF"
+        assert "sk-secret" not in response.text
+        # params 浅合并：stream 是 run 自动降级写的内部键，不能被编辑抹掉
+        assert body["params"]["temperature"] == 0.9
+        assert body["params"]["stream"] is False
+
+        assert (
+            client.put(
+                "/api/providers/nope",
+                json={
+                    "name": "x",
+                    "base_url": "http://x/v1",
+                    "model": "m",
+                    "api_key_ref": "",
+                },
+            ).status_code
+            == 404
+        )
+        assert (
+            client.put(
+                f"/api/providers/{created['id']}",
+                json={
+                    "name": "x",
+                    "base_url": "ftp://bad",
+                    "model": "m",
+                    "api_key_ref": "",
+                },
+            ).status_code
+            == 400
+        )
+
+
+def test_delete_provider(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        created = client.post(
+            "/api/providers",
+            json={
+                "name": "local",
+                "base_url": "http://localhost:1/v1",
+                "model": "m",
+                "api_key": "sk-secret",
+            },
+        ).json()
+        assert (
+            client.delete(f"/api/providers/{created['id']}").status_code
+            == 204
+        )
+        assert client.get("/api/providers").json() == []
+        assert client.delete(f"/api/providers/{created['id']}").status_code == 404
+
+
+def test_delete_provider_blocked_by_runs(tmp_path) -> None:
+    db = Database(tmp_path / "t.db")
+    db.initialize()
+    state = apply_moves(CubeState.solved(2), ["R"])
+    benchmark = Benchmark(
+        id="bench",
+        name="demo",
+        cube="2x2",
+        tasks=[
+            Task(
+                id="t1",
+                cube="2x2",
+                scramble=["R"],
+                scramble_depth=1,
+                state=state.to_json(),
+                reference_length=1,
+                reference_kind="exact",
+                bin="1",
+            )
+        ],
+    )
+    save_benchmark(db, benchmark, {"seed": 3})
+    app = create_app(
+        db=db,
+        provider_factory=lambda record: FakeProvider([]),
+        solver_factory=lambda cube: None,
+        env={},
+    )
+    client = TestClient(app)
+    with client:
+        created = client.post(
+            "/api/providers",
+            json={
+                "name": "local",
+                "base_url": "http://localhost:1/v1",
+                "model": "m",
+                "api_key": "sk-secret",
+            },
+        ).json()
+        create_run(
+            db,
+            provider_id=created["id"],
+            benchmark_id=benchmark.id,
+            tool_mode="both",
+            prompt_version="v1",
+            params={},
+            budget={},
+        )
+        response = client.delete(f"/api/providers/{created['id']}")
+        assert response.status_code == 409
+        assert "1 条 run" in response.json()["detail"]

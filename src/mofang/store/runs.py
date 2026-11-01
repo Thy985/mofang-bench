@@ -50,6 +50,17 @@ def create_run(
     return run_id
 
 
+def count_runs_for_provider(db: Database, provider_id: str) -> int:
+    conn = db.connect()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE provider_id = ?", (provider_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0])
+
+
 def set_run_status(
     db: Database,
     run_id: str,

@@ -7,6 +7,7 @@ import type {
   ProbeResult,
   Provider,
   ProviderCreate,
+  ProviderUpdate,
   Report,
   Run,
   RunCreate,
@@ -51,6 +52,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     throw new ApiError(response.status, detail)
   }
+  // 204 无响应体（如 DELETE），直接返回 undefined
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
@@ -63,6 +66,15 @@ export const api = {
     list: () => request<Provider[]>('/providers'),
     create: (payload: ProviderCreate) =>
       request<Provider>('/providers', post(payload)),
+    update: (id: string, payload: ProviderUpdate) =>
+      request<Provider>(`/providers/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }),
+    remove: (id: string) =>
+      request<void>(`/providers/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
     probe: (id: string) =>
       request<ProbeResult>(
         `/providers/${encodeURIComponent(id)}/probe`,

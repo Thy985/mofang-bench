@@ -9,11 +9,19 @@ from ...service.factory import ProviderConfigError
 from ...store.providers import (
     ProviderRecord,
     create_provider,
+    delete_provider,
     get_provider,
     list_providers,
     set_provider_key,
+    update_provider,
 )
-from ..schemas import ProviderCreate, ProviderKeyUpdate, ProviderOut
+from ...store.runs import count_runs_for_provider
+from ..schemas import (
+    ProviderCreate,
+    ProviderKeyUpdate,
+    ProviderOut,
+    ProviderUpdate,
+)
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
@@ -64,6 +72,39 @@ def list_all(request: Request) -> list[ProviderOut]:
         _out(request, record)
         for record in list_providers(request.app.state.db)
     ]
+
+
+@router.put("/{provider_id}", response_model=ProviderOut)
+def update(provider_id: str, payload: ProviderUpdate, request: Request) -> ProviderOut:
+    if not payload.base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, "base_url must be http(s)")
+    record = update_provider(
+        request.app.state.db,
+        provider_id,
+        name=payload.name,
+        base_url=payload.base_url,
+        model=payload.model,
+        api_key_ref=payload.api_key_ref.strip(),
+        params=payload.params,
+    )
+    if record is None:
+        raise HTTPException(404, "provider not found")
+    return _out(request, record)
+
+
+@router.delete("/{provider_id}", status_code=204)
+def remove(provider_id: str, request: Request) -> None:
+    db = request.app.state.db
+    if get_provider(db, provider_id) is None:
+        raise HTTPException(404, "provider not found")
+    count = count_runs_for_provider(db, provider_id)
+    if count > 0:
+        raise HTTPException(
+            409,
+            f"该模型已有 {count} 条 run 记录，无法删除；"
+            "删除会破坏历史 run 的展示，请先处理相关 run。",
+        )
+    delete_provider(db, provider_id)
 
 
 @router.put("/{provider_id}/key", response_model=ProviderOut)

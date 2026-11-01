@@ -14,6 +14,14 @@ class ProviderCreate(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProviderUpdate(BaseModel):
+    name: str = Field(min_length=1)
+    base_url: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key_ref: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProviderKeyUpdate(BaseModel):
     api_key: str = Field(min_length=1)
 
