@@ -70,3 +70,56 @@ def test_unknown_tool() -> None:
     outcome = executor.execute("solve_it", {})
     assert not outcome.ok
     assert outcome.payload["error"] == "unknown_tool"
+
+
+def test_submit_plan_round_trip() -> None:
+    executor = ToolExecutor(CubeState.solved(2))
+    outcome = executor.execute(
+        "submit_plan",
+        {"goal": "还原", "phases": [{"name": "第一步", "approach": "先转R"}, {"name": "第二步"}]},
+    )
+    assert outcome.ok
+    assert outcome.payload["plan"] == {
+        "goal": "还原",
+        "phases": [
+            {"name": "第一步", "approach": "先转R"},
+            {"name": "第二步", "approach": ""},
+        ],
+    }
+    assert executor.plan == outcome.payload["plan"]
+
+
+def test_submit_plan_rejects_bad_shapes() -> None:
+    executor = ToolExecutor(CubeState.solved(2))
+    for arguments in (
+        {"goal": "", "phases": [{"name": "a"}]},
+        {"goal": "g", "phases": []},
+        {"goal": "g", "phases": [{"name": " "}]},
+        {"goal": "g", "phases": "nope"},
+        {"goal": "g", "phases": [{"name": f"p{i}"} for i in range(9)]},
+    ):
+        outcome = executor.execute("submit_plan", arguments)
+        assert not outcome.ok
+        assert outcome.payload["error"] == "invalid_arguments"
+    # 无效形状不消耗提交次数
+    assert executor.plan is None
+    assert executor.plan_submissions == 0
+
+
+def test_submit_plan_revision_limit_keeps_last_plan() -> None:
+    executor = ToolExecutor(CubeState.solved(2))
+    for index in range(4):  # 首发 + 3 次修订都放行
+        outcome = executor.execute(
+            "submit_plan",
+            {"goal": f"g{index}", "phases": [{"name": f"p{index}"}]},
+        )
+        assert outcome.ok
+    assert executor.plan["goal"] == "g3"
+    # 第 5 次拒绝：普通错误（不记协议错误），计划保持不变
+    outcome = executor.execute(
+        "submit_plan", {"goal": "g4", "phases": [{"name": "p4"}]}
+    )
+    assert not outcome.ok
+    assert outcome.payload["error"] == "plan_limit_reached"
+    assert executor.plan["goal"] == "g3"
+    assert executor.protocol_errors == 0

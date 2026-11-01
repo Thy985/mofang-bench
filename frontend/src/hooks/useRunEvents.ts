@@ -10,6 +10,7 @@ import {
 const EVENT_TYPES: RunEvent['type'][] = [
   'run.started',
   'episode.started',
+  'plan.updated',
   'model.turn.started',
   'model.message',
   'thinking.delta',
@@ -88,6 +89,7 @@ export function useRunEvents(runId: string): RunEventsState {
         episodes: snapshot.episodes,
         lastEventId: snapshot.last_event_id,
         snapshotState: snapshot.current_state,
+        currentPlan: snapshot.current_plan ?? null,
         reset: !snapshotLanded,
       })
       snapshotLanded = true

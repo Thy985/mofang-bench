@@ -9,6 +9,43 @@ from ..cube.moves import InvalidMove, apply_moves, format_move, parse_move, turn
 from ..cube.state import CubeState
 
 MAX_BATCH_MOVES = 30
+MAX_PLAN_PHASES = 8
+# 计划允许的提交次数：首次 + 3 次修订
+MAX_PLAN_SUBMISSIONS = 4
+
+PLAN_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "submit_plan",
+        "description": (
+            "Submit (or revise) your goal and phased plan before/while "
+            f"solving. Provide a short goal and at most {MAX_PLAN_PHASES} "
+            "phases, each with a name and an optional approach. "
+            "Submitting again replaces the previous plan."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string"},
+                "phases": {
+                    "type": "array",
+                    "maxItems": MAX_PLAN_PHASES,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "approach": {"type": "string"},
+                        },
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["goal", "phases"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -113,6 +150,8 @@ class ToolExecutor:
         self.tool_calls = 0
         self.invalid_calls = 0
         self.protocol_errors = 0
+        self.plan: dict[str, Any] | None = None
+        self.plan_submissions = 0
 
     def execute(self, name: str, arguments: dict[str, Any] | None) -> ToolOutcome:
         self.tool_calls += 1
@@ -130,6 +169,8 @@ class ToolExecutor:
             return self._get_state()
         if name == "check_solved":
             return self._check_solved()
+        if name == "submit_plan":
+            return self._submit_plan(arguments)
         return self._error("unknown_tool", f"unknown tool: {name}")
 
     def _turn(self, arguments: dict[str, Any]) -> ToolOutcome:
@@ -166,6 +207,46 @@ class ToolExecutor:
         self.state = apply_moves(self.state, moves)
         self.moves_used += len(moves)
         return self._ok({"applied": list(moves)}, applied=list(moves))
+
+    def _submit_plan(self, arguments: dict[str, Any]) -> ToolOutcome:
+        # 计划超限只回普通错误（不记协议错误），且保留原计划——
+        # 模型反复改计划不该直接把整局判死。
+        if self.plan is not None and self.plan_submissions >= MAX_PLAN_SUBMISSIONS:
+            return self._error(
+                "plan_limit_reached",
+                f"plan can be submitted at most {MAX_PLAN_SUBMISSIONS} times; keep the current plan",
+            )
+        goal = arguments.get("goal")
+        phases = arguments.get("phases")
+        if not isinstance(goal, str) or not goal.strip():
+            return self._error("invalid_arguments", "goal must be a non-empty string")
+        if (
+            not isinstance(phases, list)
+            or not phases
+            or len(phases) > MAX_PLAN_PHASES
+            or any(
+                not isinstance(phase, dict)
+                or not isinstance(phase.get("name"), str)
+                or not phase["name"].strip()
+                for phase in phases
+            )
+        ):
+            return self._error(
+                "invalid_arguments",
+                f"phases must be 1..{MAX_PLAN_PHASES} objects, each with a non-empty name",
+            )
+        self.plan = {
+            "goal": goal.strip(),
+            "phases": [
+                {
+                    "name": phase["name"].strip(),
+                    "approach": str(phase.get("approach", "") or "").strip(),
+                }
+                for phase in phases
+            ],
+        }
+        self.plan_submissions += 1
+        return self._ok({"plan": dict(self.plan)})
 
     def _get_state(self) -> ToolOutcome:
         return self._ok({})

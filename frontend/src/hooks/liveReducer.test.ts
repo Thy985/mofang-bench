@@ -432,6 +432,84 @@ function stateAfterSnapshot() {
   })
 }
 
+// —— plan ——（计划：plan.updated 落地、episode 切换重置、snapshot 恢复）
+
+const plan = { goal: '还原魔方', phases: [{ name: '第一步', approach: '先转R' }] }
+
+describe('liveReducer plan', () => {
+  it('plan.updated 落地当前计划', () => {
+    const state = apply(initialLiveState(), {
+      type: 'event',
+      event: event('plan.updated', { plan, revisions: 0 }),
+    })
+    expect(state.plan).toEqual(plan)
+  })
+
+  it('episode.started 重置计划，plan.updated 按事件序去重', () => {
+    let state = apply(initialLiveState(), {
+      type: 'event',
+      event: event('plan.updated', { plan, revisions: 0 }),
+    })
+    state = apply(state, {
+      type: 'event',
+      event: event(
+        'episode.started',
+        { task_id: 'b1:t2', reference_length: 2 },
+        2,
+      ),
+    })
+    expect(state.plan).toBeNull()
+    // 旧事件 id 不应再覆盖
+    state = apply(state, {
+      type: 'event',
+      event: event('plan.updated', { plan, revisions: 0 }, 1),
+    })
+    expect(state.plan).toBeNull()
+    state = apply(state, {
+      type: 'event',
+      event: event('plan.updated', { plan, revisions: 1 }, 3),
+    })
+    expect(state.plan).toEqual(plan)
+  })
+
+  it('snapshot 用 currentPlan 恢复，reset 无计划时清空', () => {
+    let state = apply(initialLiveState(), {
+      type: 'event',
+      event: event('plan.updated', { plan, revisions: 0 }),
+    })
+    // 非重置 snapshot：无 currentPlan 时保留现值
+    state = apply(state, {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 9,
+      snapshotState: null,
+      reset: false,
+    })
+    expect(state.plan).toEqual(plan)
+    // reset snapshot：带 currentPlan 覆盖，缺省则清空
+    state = apply(state, {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 10,
+      snapshotState: null,
+      currentPlan: { goal: 'g2', phases: [{ name: 'p' }] },
+      reset: true,
+    })
+    expect(state.plan).toEqual({ goal: 'g2', phases: [{ name: 'p' }] })
+    state = apply(state, {
+      type: 'snapshot',
+      run: makeRun(),
+      episodes: [],
+      lastEventId: 11,
+      snapshotState: null,
+      reset: true,
+    })
+    expect(state.plan).toBeNull()
+  })
+})
+
 // —— derivePhase ——（以下为新增 describe，fixture 自包含）
 
 const phaseEpisode = (status: Episode['status']): Episode => ({

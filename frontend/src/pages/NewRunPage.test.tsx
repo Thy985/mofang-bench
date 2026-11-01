@@ -283,6 +283,32 @@ describe('NewRunView', () => {
     expect(viewProps.onCreate).not.toHaveBeenCalled()
   })
 
+  it('defaults plan mode on and allows toggling it off', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByTestId('newrun-require-plan')).toBeChecked()
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].require_plan).toBe(true)
+    // 关掉计划模式再提交
+    onCreate.mockClear()
+    await user.click(screen.getByTestId('newrun-require-plan'))
+    expect(screen.getByTestId('newrun-require-plan')).not.toBeChecked()
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].require_plan).toBe(false)
+  })
+
   it.each([
     ['max_moves 清空', 'max_moves', 'max_moves 必须是正整数'],
     ['max_tool_calls 清空', 'max_tool_calls', 'max_tool_calls 必须是正整数'],

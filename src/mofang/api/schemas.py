@@ -71,6 +71,8 @@ class RunCreate(BaseModel):
     provider_ids: list[str] = Field(default_factory=list)
     # 选题子集：benchmark 内的 task key 列表；None = 跑全集。
     task_keys: list[str] | None = None
+    # 计划模式：要求 agent 先调用 submit_plan 提交目标与分阶段计划。
+    require_plan: bool = False
     params: dict[str, Any] = Field(default_factory=dict)
     budget: dict[str, Any] = Field(default_factory=dict)
 
@@ -85,6 +87,8 @@ class RunOut(BaseModel):
     status: str
     totals: dict[str, Any] | None
     error: str | None
+    task_keys: list[str] | None = None
+    require_plan: bool = False
     created_at: str
     started_at: str | None
     finished_at: str | None
@@ -107,6 +111,7 @@ class EpisodeOut(BaseModel):
     latency_ms: int | None
     failure_code: str | None
     error: str | None
+    plan: dict[str, Any] | None = None
     started_at: str | None
     finished_at: str | None
 

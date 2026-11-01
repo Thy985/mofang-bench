@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useBenchmark, useEpisode, useRun, useSteps } from '../api/queries'
-import type { Episode, Step } from '../api/types'
+import type { Episode, Plan, Step } from '../api/types'
 import { PlayerBar } from '../components/PlayerBar'
+import { PlanPanel } from '../components/PlanPanel'
 import { StatusBadge } from '../components/StatusBadge'
 import { CubeView } from '../cube/CubeView'
 import { FaceLegend } from '../cube/FaceLegend'
@@ -30,6 +31,24 @@ const chipCls = (active: boolean) =>
   `rounded px-2 py-1 text-xs ${
     active ? 'bg-accent-dim text-white' : 'bg-surface text-text'
   }`
+
+// 回放页的计划兜底：从 steps 里找最后一次 submit_plan 的参数。
+// 新数据直接用 episode.plan（快照），只有旧记录或落库缺失时才走这里。
+export function planFromSteps(steps: Step[]): Plan | null {
+  for (let index = steps.length - 1; index >= 0; index -= 1) {
+    const step = steps[index]
+    if (step.tool_name !== 'submit_plan') continue
+    const args = step.arguments
+    if (
+      args &&
+      typeof args.goal === 'string' &&
+      Array.isArray(args.phases)
+    ) {
+      return { goal: args.goal, phases: args.phases } as Plan
+    }
+  }
+  return null
+}
 
 export function EpisodeView({
   episode,
@@ -85,6 +104,14 @@ export function EpisodeView({
           <div>{episode.failure_code ?? '—'}</div>
         </div>
       </div>
+
+      {/* 计划回放：优先用 episode.plan，缺失时回退到 steps 里最后一次 submit_plan */}
+      <PlanPanel
+        plan={
+          episode.plan ??
+          planFromSteps(steps) ?? null
+        }
+      />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
         {cube}

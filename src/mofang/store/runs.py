@@ -27,6 +27,7 @@ def create_run(
     params: dict[str, Any],
     budget: dict[str, Any],
     task_keys: list[str] | None = None,
+    require_plan: bool = False,
 ) -> str:
     run_id = uuid.uuid4().hex
     with db.transaction() as conn:
@@ -35,8 +36,9 @@ def create_run(
             INSERT INTO runs
               (id, provider_id, benchmark_id, tool_mode, prompt_version,
                params_json, budget_json, status, totals_json, error,
-               created_at, started_at, finished_at, task_keys_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               created_at, started_at, finished_at, task_keys_json,
+               require_plan)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 run_id,
@@ -53,6 +55,7 @@ def create_run(
                 None,
                 None,
                 _dump(task_keys) if task_keys is not None else None,
+                int(require_plan),
             ),
         )
     return run_id
@@ -119,6 +122,7 @@ def _run_dict(row: Any) -> dict[str, Any]:
             if row["task_keys_json"]
             else None
         ),
+        "require_plan": bool(row["require_plan"]),
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
@@ -173,6 +177,16 @@ def create_episode(
             ),
         )
     return episode_id
+
+
+def set_episode_plan(
+    db: Database, episode_id: str, plan: dict[str, Any]
+) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE episodes SET plan_json = ? WHERE id = ?",
+            (_dump(plan), episode_id),
+        )
 
 
 def finish_episode(db: Database, episode_id: str, result: EpisodeResult) -> None:
@@ -254,6 +268,7 @@ def _episode_dict(row: Any) -> dict[str, Any]:
         "final_state": json.loads(row["final_state_json"]),
         "failure_code": row["failure_code"],
         "error": row["error"],
+        "plan": json.loads(row["plan_json"]) if row["plan_json"] else None,
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
     }

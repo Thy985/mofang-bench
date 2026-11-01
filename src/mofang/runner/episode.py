@@ -20,7 +20,7 @@ from ..models.provider import (
 from ..tasks.models import Task
 from .budget import Budget
 from .context import ContextBuilder, TurnRecord, system_prompt, task_message
-from .tools import TOOLS, ToolExecutor, serialize_tool_result
+from .tools import PLAN_TOOL, TOOLS, ToolExecutor, serialize_tool_result
 
 
 class EpisodeStatus(StrEnum):
@@ -61,6 +61,7 @@ class EpisodeResult:
     final_state: dict[str, Any]
     failure_code: str | None
     error: str | None = None
+    plan: dict[str, Any] | None = None
     steps: list[StepRecord] = field(default_factory=list)
 
 
@@ -109,6 +110,8 @@ class EpisodeRunner:
     MAX_PROTOCOL_ERRORS = 5
     MAX_TOOL_CALLS_PER_TURN = 5
     MAX_NUDGES = 2
+    # 计划催促独立于 MAX_NUDGES：拒不交计划只提醒，不终止本局
+    MAX_PLAN_NUDGES = 2
 
     def __init__(
         self,
@@ -117,6 +120,7 @@ class EpisodeRunner:
         budget: Budget,
         params: ModelParams | None = None,
         tool_mode: str = "both",
+        require_plan: bool = False,
     ) -> None:
         if tool_mode not in ("both", "turn_only", "batch_only"):
             raise ValueError(f"invalid tool_mode: {tool_mode}")
@@ -125,6 +129,7 @@ class EpisodeRunner:
         self.budget = budget
         self.params = params or ModelParams()
         self.tool_mode = tool_mode
+        self.require_plan = require_plan
 
     def _tools(self) -> list[dict[str, Any]]:
         names = {"get_state", "check_solved"}
@@ -132,9 +137,14 @@ class EpisodeRunner:
             names.add("turn")
         if self.tool_mode in ("both", "batch_only"):
             names.add("apply_moves")
-        return [
+        if self.require_plan:
+            names.add("submit_plan")
+        tools = [
             tool for tool in TOOLS if tool["function"]["name"] in names
         ]
+        if self.require_plan:
+            tools.append(PLAN_TOOL)
+        return tools
 
     async def _distance(self, state: CubeState) -> int | None:
         # 3x3 参照求解器是同步子进程管道，直接调用会卡住事件循环，
@@ -192,7 +202,8 @@ class EpisodeRunner:
             initial, self.budget.max_moves, self.budget.max_tool_calls
         )
         builder = ContextBuilder(
-            system_prompt(), task_message(self.budget.max_moves)
+            system_prompt(self.require_plan),
+            task_message(self.budget.max_moves, self.require_plan),
         )
         records: list[TurnRecord] = []
         move_history: list[str] = []
@@ -200,6 +211,7 @@ class EpisodeRunner:
         tokens_in = 0
         tokens_out = 0
         nudges = 0
+        plan_nudges = 0
         status = EpisodeStatus.STOPPED_UNSOLVED
         error_message: str | None = None
         start_length = (await self._distance(initial)) or task.reference_length
@@ -219,7 +231,11 @@ class EpisodeRunner:
                 error_message = f"episode timeout after {self.budget.max_seconds:g}s"
                 break
             messages = builder.build(
-                executor.state.to_json(), move_history, records, nudge=nudge
+                executor.state.to_json(),
+                move_history,
+                records,
+                nudge=nudge,
+                plan=executor.plan,
             )
             nudge = None
             throttle = ThinkingThrottle(notify, seq=len(records))
@@ -307,6 +323,18 @@ class EpisodeRunner:
                         },
                     )
                     outcome = executor.execute(call.name, call.arguments)
+                    if (
+                        outcome.ok
+                        and call.name == "submit_plan"
+                        and isinstance(outcome.payload.get("plan"), dict)
+                    ):
+                        notify(
+                            "plan.updated",
+                            {
+                                "plan": outcome.payload["plan"],
+                                "revisions": executor.plan_submissions - 1,
+                            },
+                        )
                     record.tool_results.append(
                         {
                             "role": "tool",
@@ -384,6 +412,16 @@ class EpisodeRunner:
                     "你还没有解出魔方。请继续调用工具；"
                     "如果确实无法继续，请明确说明。"
                 )
+            if (
+                self.require_plan
+                and executor.plan is None
+                and plan_nudges < self.MAX_PLAN_NUDGES
+            ):
+                # 催计划独立计数：拒不交计划只提醒几次，不杀本局
+                nudge = (
+                    "请先调用 submit_plan 设定目标与分阶段计划，然后再继续。"
+                )
+                plan_nudges += 1
 
         final_state = executor.state
         final_length = await self._distance(final_state)
@@ -414,6 +452,7 @@ class EpisodeRunner:
             final_state=final_state.to_json(),
             failure_code=failure_code,
             error=error_message,
+            plan=executor.plan,
             steps=steps,
         )
         notify("episode.finished", {"status": status.value, "solved": result.solved})

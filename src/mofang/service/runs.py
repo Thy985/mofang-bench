@@ -22,6 +22,7 @@ from ..store.runs import (
     fail_running_episodes,
     finish_episode,
     get_run,
+    set_episode_plan,
     set_run_status,
 )
 from .factory import budget_for, model_params_for
@@ -136,6 +137,14 @@ class RunService:
                     ) -> None:
                         if kind == "episode.finished":
                             return
+                        if kind == "plan.updated":
+                            # 计划随提交落库：run 中途刷新页面时 snapshot
+                            # 能从 episode 行恢复当前计划。
+                            plan = payload.get("plan")
+                            if isinstance(plan, dict):
+                                set_episode_plan(
+                                    self.db, episode_id, plan
+                                )
                         self.events.publish(
                             run_id, kind, payload, episode_id=episode_id
                         )
@@ -146,6 +155,7 @@ class RunService:
                         budget=budget,
                         params=params,
                         tool_mode=run["tool_mode"],
+                        require_plan=bool(run.get("require_plan")),
                     )
                     result = await runner.run(task, emit=emit, cancel=cancel)
                     finish_episode(self.db, episode_id, result)

@@ -11,11 +11,11 @@ class TurnRecord:
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
 
 
-def system_prompt() -> str:
-    return (
+def system_prompt(require_plan: bool = False) -> str:
+    text = (
         "你是被评测的魔方操作者。目标是把魔方还原到六面同色。"
         "你只能通过工具操作魔方，不能直接修改状态，也不要使用外部求解器或凭记忆猜测。\n\n"
         "状态格式：工具返回 JSON，形如 "
@@ -34,14 +34,37 @@ def system_prompt() -> str:
         "预算：步数与工具调用次数有限，超限会立即结束本局。已还原时停止调用工具。"
         "如果局面反复回到同一状态，说明当前策略无效，应改用不同思路。"
     )
+    if require_plan:
+        # 只约定计划的结构，不给任何还原法/阶段命名的领域提示，保证对不同模型公平。
+        text += (
+            "\n\n计划：在开始还原前，先调用 submit_plan 提交本次目标（goal）"
+            "与分阶段计划（phases，每阶段含 name，可选 approach）。"
+            "之后按阶段推进；如需调整可再次调用 submit_plan（最多 3 次修订）。"
+            "计划不会替你执行任何操作，操作仍只能通过工具完成。"
+        )
+    return text
 
 
-def task_message(max_moves: int) -> str:
+def task_message(max_moves: int, require_plan: bool = False) -> str:
+    plan_line = (
+        "请先调用 submit_plan 设定目标与分阶段计划，再开始还原。" if require_plan else ""
+    )
     return (
         f"任务：用不超过 {max_moves} 步还原魔方。"
         "标准记法：U/R/F/D/L/B，后缀 ' 表示逆时针 90°，2 表示 180°。"
         "只使用工具；不要输出无法执行的计划。"
+        + plan_line
     )
+
+
+def plan_block(plan: dict[str, Any]) -> str:
+    phases = plan.get("phases") or []
+    lines = [
+        f"{index}.{phase.get('name', '')}"
+        + (f"（{phase['approach']}）" if phase.get("approach") else "")
+        for index, phase in enumerate(phases, 1)
+    ]
+    return f"当前计划——目标：{plan.get('goal', '')}；阶段：{'；'.join(lines)}"
 
 
 class ContextBuilder:
@@ -56,6 +79,7 @@ class ContextBuilder:
         move_history: list[str],
         records: list[TurnRecord],
         nudge: str | None = None,
+        plan: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system},
@@ -64,8 +88,12 @@ class ContextBuilder:
         for record in records[-self.keep_turns :]:
             messages.append(record.assistant)
             messages.extend(record.tool_results)
+        # 计划块拼进每轮状态消息：keep_turns 截断会丢掉早期提交的计划，
+        # 每轮重放才能让模型始终带着自己的计划推进。
+        plan_text = f"{plan_block(plan)}\n" if plan else ""
         state_text = (
-            "当前局面（JSON）：\n"
+            plan_text
+            + "当前局面（JSON）：\n"
             + json.dumps(state_json, ensure_ascii=False, separators=(",", ":"))
             + "\n已完成走法："
             + (" ".join(move_history) if move_history else "无")

@@ -505,3 +505,54 @@ def test_batch_create_rejects_bad_task_keys_and_providers(tmp_path: Path) -> Non
             json={"benchmark_id": benchmark_id},
         )
         assert none_given.status_code == 400
+
+
+def test_require_plan_persists_plan_to_snapshot(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="submit_plan",
+                        arguments={
+                            "goal": "还原魔方",
+                            "phases": [{"name": "第一步", "approach": "逆转打乱"}],
+                        },
+                    )
+                ]
+            ),
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="apply_moves",
+                        arguments={"moves": ["R'"]},
+                    )
+                ]
+            ),
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        response = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "require_plan": True,
+            },
+        )
+        assert response.status_code == 202
+        run_id = response.json()["id"]
+        run = wait_finished(client, run_id)
+        assert run["status"] == "finished"
+        assert run["prompt_version"] == "v2-plan"
+        episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
+        assert episodes[0]["plan"] == {
+            "goal": "还原魔方",
+            "phases": [{"name": "第一步", "approach": "逆转打乱"}],
+        }
+        snapshot = client.get(f"/api/runs/{run_id}/snapshot").json()
+        assert snapshot["current_plan"] == episodes[0]["plan"]

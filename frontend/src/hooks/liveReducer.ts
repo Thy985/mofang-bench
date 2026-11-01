@@ -1,6 +1,7 @@
 import type {
   CubeState,
   Episode,
+  Plan,
   ProgressPoint,
   Run,
   RunEvent,
@@ -44,6 +45,8 @@ export interface LiveState {
   snapshotState: CubeState | null
   snapshotToken: number
   episodeToken: number
+  // 当前 episode 的计划（submit_plan 提交）；每局重置
+  plan: Plan | null
 }
 
 export type LiveAction =
@@ -53,6 +56,8 @@ export type LiveAction =
       episodes: Episode[]
       lastEventId: number
       snapshotState: CubeState | null
+      // 重连恢复用；缺省时 reset 清空、非 reset 保留现值
+      currentPlan?: Plan | null
       reset: boolean
     }
   | { type: 'event'; event: RunEvent }
@@ -76,6 +81,7 @@ export function initialLiveState(): LiveState {
     snapshotState: null,
     snapshotToken: 0,
     episodeToken: 0,
+    plan: null,
   }
 }
 
@@ -101,6 +107,7 @@ function episodeFromStarted(event: RunEvent): Episode {
     latency_ms: null,
     failure_code: null,
     error: null,
+    plan: null,
     started_at: event.ts,
     finished_at: null,
   }
@@ -126,6 +133,8 @@ export function liveReducer(
       snapshotState: action.snapshotState,
       snapshotToken: state.snapshotToken + 1,
       error: action.run.error,
+      // 重连时用后端落库的计划恢复；首次落地以 snapshot 为准
+      plan: action.currentPlan ?? (action.reset ? null : state.plan),
       connection:
         action.run.status === 'queued' || action.run.status === 'running'
           ? state.connection
@@ -178,8 +187,11 @@ export function liveReducer(
         thinking: false,
         thinkingText: '',
         episodeToken: state.episodeToken + 1,
+        plan: null,
       }
     }
+    case 'plan.updated':
+      return { ...next, plan: event.data.plan }
     case 'model.turn.started':
       return { ...next, thinking: true, thinkingText: '' }
     case 'thinking.delta':

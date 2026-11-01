@@ -16,7 +16,7 @@ import type {
   Run,
   Step,
 } from '../api/types'
-import EpisodePage, { EpisodeView } from './EpisodePage'
+import EpisodePage, { EpisodeView, planFromSteps } from './EpisodePage'
 
 // 页面模块静态导入 CubeView → three；用例不渲染 3D，mock 掉避免把 three 带进 jsdom。
 // stub 同时模拟真实内核的 instant 分支（速度 ≥100 瞬间消费批次并回调 onBatchComplete），
@@ -364,5 +364,48 @@ describe('EpisodePage', () => {
     )
     renderEpisodePage('missing')
     expect(await screen.findByText(/未找到该记录/)).toBeInTheDocument()
+  })
+})
+
+
+describe('planFromSteps', () => {
+  const planStep: Step = {
+    id: 's2',
+    seq: 2,
+    kind: 'tool',
+    tool_name: 'submit_plan',
+    arguments: { goal: '还原魔方', phases: [{ name: '第一步' }] },
+    result: { ok: true },
+    state: null,
+    reference_length_after: null,
+  }
+
+  it('取最后一次 submit_plan 的参数作为计划', () => {
+    const steps: Step[] = [
+      {
+        id: 's1', seq: 1, kind: 'model', tool_name: null,
+        arguments: null, result: {}, state: null,
+        reference_length_after: null,
+      },
+      planStep,
+      {
+        id: 's3', seq: 3, kind: 'tool', tool_name: 'apply_moves',
+        arguments: { moves: ["R'"] }, result: {}, state: null,
+        reference_length_after: null,
+      },
+    ]
+    expect(planFromSteps(steps)).toEqual({
+      goal: '还原魔方',
+      phases: [{ name: '第一步' }],
+    })
+  })
+
+  it('没有计划时返回 null；畸形参数也返回 null', () => {
+    expect(planFromSteps([])).toBeNull()
+    expect(
+      planFromSteps([
+        { ...planStep, arguments: { phases: [] } },
+      ]),
+    ).toBeNull()
   })
 })

@@ -71,10 +71,12 @@ async def start(payload: RunCreate, request: Request) -> dict:
             provider_id=provider.id,
             benchmark_id=benchmark.id,
             tool_mode=payload.tool_mode,
-            prompt_version="v1",
+            # 计划模式走 v2-plan；非计划模式与 v1 行为一致，保持标注可比
+            prompt_version="v2-plan" if payload.require_plan else "v1",
             params=payload.params,
             budget=budget,
             task_keys=task_keys,
+            require_plan=payload.require_plan,
         )
         request.app.state.service.start(run_id)
         created.append({"id": run_id, "provider_id": provider.id})
@@ -148,11 +150,15 @@ def snapshot(run_id: str, request: Request) -> dict:
     current_state = _live_state(
         db, request.app.state.events, run, episodes
     )
+    # 当前计划：只看最新一条 episode——计划是每局重置的，
+    # 旧 episode 的计划对当前局面没有意义。
+    current_plan = episodes[-1].get("plan") if episodes else None
     return {
         "run": _run_out(run),
         "episodes": [_episode_out(item) for item in episodes],
         "last_event_id": len(request.app.state.events.history(run_id)),
         "current_state": current_state,
+        "current_plan": current_plan,
     }
 
 

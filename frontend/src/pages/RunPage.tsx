@@ -19,6 +19,7 @@ import { PhaseStepper } from '../components/PhaseStepper'
 import { ProgressChart } from '../components/ProgressChart'
 import { ResultView } from '../components/ResultView'
 import { StatusBadge } from '../components/StatusBadge'
+import { PlanPanel } from '../components/PlanPanel'
 import { ThinkingPanel } from '../components/ThinkingPanel'
 import { ToolLog } from '../components/ToolLog'
 import { CubeView } from '../cube/CubeView'
@@ -136,6 +137,7 @@ export function RunLivePanel({
           思考中…
         </p>
       )}
+      <PlanPanel plan={live.plan} />
       {thinkingSeen.current && <ThinkingPanel text={live.thinkingText} />}
       {live.firstInvalidCall && (
         <p className="text-amber-300">

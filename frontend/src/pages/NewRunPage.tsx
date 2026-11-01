@@ -129,6 +129,8 @@ export function NewRunView({
   // null = 全选（默认）；选中题集切换后回落到全选
   const [selectedTasks, setSelectedTasks] = useState<Set<string> | null>(null)
   const [toolMode, setToolMode] = useState<ToolMode>('both')
+  // 计划模式默认开启：prompt_version 记为 v2-plan，可与关闭的 run 消融对比
+  const [requirePlan, setRequirePlan] = useState(true)
   const [budget, setBudget] = useState<Record<BudgetKey, string>>(
     toBudgetForm(DEFAULTS['2x2']),
   )
@@ -280,6 +282,7 @@ export function NewRunView({
         benchmark_id: activeBenchmarkId,
         tool_mode: toolMode,
         task_keys: allSelected ? null : selectedKeys,
+        require_plan: requirePlan,
         params: parsedParams,
         budget: parsedBudget,
       })
@@ -397,6 +400,20 @@ export function NewRunView({
             <option value="turn_only">turn only</option>
             <option value="batch_only">apply_moves only</option>
           </Select>
+        </label>
+        <label className="flex items-center gap-2 self-end pb-2 text-sm">
+          <input
+            type="checkbox"
+            data-testid="newrun-require-plan"
+            checked={requirePlan}
+            onChange={(event) => setRequirePlan(event.target.checked)}
+          />
+          <span>
+            计划模式
+            <span className="text-text-dim">
+              （先提交 goal 与分阶段计划；关掉可与开启的 run 做消融对比）
+            </span>
+          </span>
         </label>
         <div className="grid gap-2 md:col-span-2">
           <div className="flex items-center justify-between">

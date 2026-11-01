@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS runs (
   created_at TEXT NOT NULL,
   started_at TEXT,
   finished_at TEXT,
-  task_keys_json TEXT
+  task_keys_json TEXT,
+  require_plan INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -80,7 +81,8 @@ CREATE TABLE IF NOT EXISTS episodes (
   failure_code TEXT,
   error TEXT,
   started_at TEXT,
-  finished_at TEXT
+  finished_at TEXT,
+  plan_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS steps (
@@ -139,6 +141,19 @@ class Database:
             if "task_keys_json" not in run_columns:
                 conn.execute(
                     "ALTER TABLE runs ADD COLUMN task_keys_json TEXT"
+                )
+            if "require_plan" not in run_columns:
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN "
+                    "require_plan INTEGER NOT NULL DEFAULT 0"
+                )
+            episode_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(episodes)")
+            }
+            if "plan_json" not in episode_columns:
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN plan_json TEXT"
                 )
             conn.commit()
         finally:

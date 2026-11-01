@@ -60,6 +60,17 @@ export interface ProbeResult {
   tool_calling: boolean
 }
 
+// submit_plan 工具的载荷；plan.updated 事件与 episode.plan/snapshot.currentPlan 同构
+export interface PlanPhase {
+  name: string
+  approach?: string
+}
+
+export interface Plan {
+  goal: string
+  phases: PlanPhase[]
+}
+
 export interface Task {
   id: string
   cube: CubeKind
@@ -150,6 +161,7 @@ export interface Run {
   benchmark_id: string
   tool_mode: ToolMode
   prompt_version: string
+  require_plan?: boolean
   status: string
   totals: AggregateReport | null
   error: string | null
@@ -176,6 +188,7 @@ export interface Episode {
   latency_ms: number | null
   failure_code: string | null
   error: string | null
+  plan?: Plan | null
   started_at: string | null
   finished_at: string | null
 }
@@ -196,6 +209,7 @@ export interface Snapshot {
   episodes: Episode[]
   last_event_id: number
   current_state: CubeState | null
+  current_plan?: Plan | null
 }
 
 export interface Report {
@@ -221,6 +235,8 @@ export interface RunCreate {
   tool_mode: ToolMode
   // 选题子集（benchmark 内的 task id）；null/缺省 = 跑全集
   task_keys?: string[] | null
+  // 计划模式：要求 agent 先 submit_plan 提交目标与分阶段计划
+  require_plan?: boolean
   params: Record<string, unknown>
   budget: Partial<Budget>
 }
@@ -251,6 +267,7 @@ export type RunEvent =
       'episode.started',
       { task_id: string; reference_length: number }
     >
+  | RunEventBase<'plan.updated', { plan: Plan; revisions: number }>
   | RunEventBase<'model.turn.started', { moves_used: number }>
   | RunEventBase<
       'model.message',

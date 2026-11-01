@@ -290,3 +290,109 @@ async def test_events_include_progress_and_usage(table_solver: Table2x2Solver) -
     move = [payload for kind, payload in events if kind == "move.applied"][-1]
     assert move["reference_length_after"] == 0
     assert result.status == EpisodeStatus.SOLVED
+
+
+async def test_plan_mode_nudges_but_does_not_kill_episode(
+    table_solver: Table2x2Solver,
+) -> None:
+    task = make_task(table_solver, ["R", "U"])
+    provider = FakeProvider(
+        [
+            # 不提交计划，先空转一步（R U R，仍在深度 3 表内）
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R"]})
+                ]
+            ),
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="apply_moves",
+                        arguments={"moves": ["R'", "U'", "R'"]},
+                    )
+                ]
+            ),
+        ]
+    )
+    result = await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+        require_plan=True,
+    ).run(task)
+    assert result.solved
+    assert result.plan is None
+
+
+async def test_plan_mode_records_plan_and_replays_in_context(
+    table_solver: Table2x2Solver,
+) -> None:
+    task = make_task(table_solver, ["R"])
+    plan = {"goal": "还原魔方", "phases": [{"name": "第一步", "approach": "逆转打乱"}]}
+    provider = FakeProvider(
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="submit_plan",
+                        arguments={
+                            "goal": plan["goal"],
+                            "phases": plan["phases"],
+                        },
+                    )
+                ]
+            ),
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="apply_moves",
+                        arguments={"moves": ["R'"]},
+                    )
+                ]
+            ),
+        ]
+    )
+    events: list[tuple[str, dict]] = []
+
+    def emit(kind: str, payload: dict) -> None:
+        events.append((kind, payload))
+
+    result = await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+        require_plan=True,
+    ).run(task, emit=emit)
+    assert result.solved
+    assert result.plan == plan
+    updated = [payload for kind, payload in events if kind == "plan.updated"]
+    assert updated and updated[0]["plan"] == plan
+    assert updated[0]["revisions"] == 0
+    # 计划要穿越 keep_turns 截断：第二轮上下文的最后一条用户消息带计划块
+    second_call = provider.calls[-1]
+    assert "当前计划——目标：还原魔方" in second_call[-1]["content"]
+
+
+async def test_plan_tool_absent_without_plan_mode(
+    table_solver: Table2x2Solver,
+) -> None:
+    runner = EpisodeRunner(
+        provider=FakeProvider([]),
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+    )
+    assert "submit_plan" not in [
+        tool["function"]["name"] for tool in runner._tools()
+    ]
+    runner_plan = EpisodeRunner(
+        provider=FakeProvider([]),
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+        require_plan=True,
+    )
+    assert "submit_plan" in [
+        tool["function"]["name"] for tool in runner_plan._tools()
+    ]
