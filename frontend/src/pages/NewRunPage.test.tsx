@@ -17,9 +17,12 @@ import {
 } from 'vitest'
 import type {
   AggregateReport,
+  BenchmarkDetail,
   BenchmarkSummary,
+  CubeState,
   Provider,
   Run,
+  Task,
 } from '../api/types'
 import NewRunPage, { NewRunView } from './NewRunPage'
 import RunsPage, { RunsView } from './RunsPage'
@@ -40,6 +43,48 @@ const provider: Provider = {
   created_at: '2026-10-26T00:00:00+00:00',
 }
 
+const provider2: Provider = {
+  ...provider,
+  id: 'p2',
+  name: 'remote',
+  model: 'm2',
+}
+
+const emptyFaces: CubeState['faces'] = {
+  U: [], R: [], F: [], D: [], L: [], B: [],
+}
+
+const benchmarkTask: Task = {
+  id: 't1',
+  cube: '2x2',
+  scramble: ['R'],
+  scramble_depth: 1,
+  state: { cube: '2x2', faces: emptyFaces },
+  reference_length: 1,
+  reference_kind: 'exact',
+  bin: '1',
+}
+
+const benchmarkTask2: Task = {
+  ...benchmarkTask,
+  id: 't2',
+  scramble: ['R', 'U'],
+  reference_length: 2,
+  bin: '2',
+}
+
+const benchmarkDetail: BenchmarkDetail = {
+  id: 'b2',
+  name: 'two',
+  version: 'v1',
+  kind: 'frozen',
+  cube: '2x2',
+  content_hash: 'h2',
+  frozen_at: '2026-10-26T00:00:00+00:00',
+  task_count: 2,
+  tasks: [benchmarkTask, benchmarkTask2],
+}
+
 const benchmarks: BenchmarkSummary[] = [
   {
     id: 'b2',
@@ -49,7 +94,7 @@ const benchmarks: BenchmarkSummary[] = [
     cube: '2x2',
     content_hash: 'h2',
     frozen_at: '2026-10-26T00:00:00+00:00',
-    task_count: 1,
+    task_count: 2,
   },
   {
     id: 'b3',
@@ -99,10 +144,14 @@ function PathProbe() {
   return <div data-testid="landed-at">{location.pathname}</div>
 }
 
-// NewRunView 需要 Router（useSearchParams 预选 benchmark），沿用现有渲染方式包 MemoryRouter
+// NewRunView 需要 Router（benchmarkId 现由页面层持有并传入），沿用现有渲染方式包 MemoryRouter
 const viewProps = {
   providers: [provider],
   benchmarks,
+  benchmarkId: 'b2',
+  onBenchmarkChange: vi.fn(),
+  benchmarkDetail,
+  benchmarkLoading: false,
   onCreate: vi.fn(async () => {}),
 }
 
@@ -151,28 +200,87 @@ describe('NewRunView', () => {
     await user.click(screen.getByRole('button', { name: '启动 run' }))
     expect(onCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider_id: 'p1',
+        provider_ids: ['p1'],
         benchmark_id: 'b2',
         tool_mode: 'both',
+        task_keys: null,
         budget: expect.objectContaining({ max_moves: 12 }),
       }),
     )
   })
 
-  it('switches defaults when a 3x3 benchmark is selected', async () => {
+  it('multi-selects providers and submits one run payload for the batch', async () => {
     const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider, provider2]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          benchmarkDetail={benchmarkDetail}
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    // 默认只勾第一个 provider
+    expect(
+      screen.getByRole('checkbox', { name: /local/ }),
+    ).toBeChecked()
+    await user.click(screen.getByRole('checkbox', { name: /remote/ }))
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider_ids: ['p1', 'p2'],
+        task_keys: null,
+      }),
+    )
+  })
+
+  it('requires at least one selected provider', async () => {
+    const user = userEvent.setup()
+    renderView({ providers: [provider] })
+    await user.click(screen.getByRole('checkbox', { name: /local/ }))
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(
+      await screen.findByText('请至少选择一个模型'),
+    ).toBeInTheDocument()
+    expect(viewProps.onCreate).not.toHaveBeenCalled()
+  })
+
+  it('submits a task subset when chips are unchecked', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
     render(
       <MemoryRouter>
         <NewRunView
           providers={[provider]}
           benchmarks={benchmarks}
-          onCreate={vi.fn()}
+          benchmarkId="b2"
+          benchmarkDetail={benchmarkDetail}
+          onCreate={onCreate}
         />
       </MemoryRouter>,
     )
-    await user.selectOptions(screen.getByLabelText('Benchmark'), 'b3')
-    expect(screen.getByLabelText('max_moves')).toHaveValue(100)
-    expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
+    expect(screen.getByText('已选 2/2')).toBeInTheDocument()
+    await user.click(screen.getByRole('checkbox', { name: /#t1/ }))
+    expect(screen.getByText('已选 1/2')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(onCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ task_keys: ['t2'] }),
+    )
+  })
+
+  it('rejects an empty task selection', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await user.click(screen.getByRole('checkbox', { name: /#t1/ }))
+    await user.click(screen.getByRole('checkbox', { name: /#t2/ }))
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    expect(
+      await screen.findByText('请至少选择一道题'),
+    ).toBeInTheDocument()
+    expect(viewProps.onCreate).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -193,13 +301,15 @@ describe('NewRunView', () => {
     },
   )
 
-  // 详情页的“用此题集新建 run”靠 query 参数预选，跑错题集不会报错但会浪费一次运行
-  it('prefills the benchmark from the query string', () => {
+  // 详情页的“用此题集新建 run”靠 query 参数预选，跑错题集不会报错但会浪费一次运行。
+  // benchmarkId 已上提到页面层，这里改为页面级用例（见 NewRunPage describe）。
+  it('switches defaults when a 3x3 benchmark is selected', async () => {
     render(
-      <MemoryRouter initialEntries={['/runs/new?benchmark=b3']}>
+      <MemoryRouter>
         <NewRunView
           providers={[provider]}
           benchmarks={benchmarks}
+          benchmarkId="b3"
           onCreate={vi.fn()}
         />
       </MemoryRouter>,
@@ -448,11 +558,17 @@ describe('NewRunPage', () => {
     const fetchMock = vi.fn(
       async (input: string, init?: RequestInit) => {
         if (init?.method === 'POST') {
-          return jsonResponse({ id: 'odd#run/1' }, 202)
+          return jsonResponse(
+            {
+              id: 'odd#run/1',
+              runs: [{ id: 'odd#run/1', provider_id: 'p1' }],
+            },
+            202,
+          )
         }
         if (input === '/api/providers') return jsonResponse([provider])
         if (input === '/api/benchmarks') return jsonResponse(benchmarks)
-        return jsonResponse([])
+        return jsonResponse(benchmarkDetail)
       },
     )
     vi.stubGlobal('fetch', fetchMock)
@@ -467,6 +583,27 @@ describe('NewRunPage', () => {
       '/api/runs',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  // 详情页的“用此题集新建 run”靠 query 参数预选：benchmarkId 上提到页面层后
+  // 改为页面级用例，?benchmark=b3 应选中 3x3 题集并带出 3x3 预算默认。
+  it('prefills the benchmark from the query string', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (input === '/api/providers') return jsonResponse([provider])
+        if (input === '/api/benchmarks') return jsonResponse(benchmarks)
+        return jsonResponse({ ...benchmarkDetail, id: 'b3', cube: '3x3' })
+      }),
+    )
+    renderPage(['/runs/new?benchmark=b3'])
+    const select = (await screen.findByLabelText(
+      'Benchmark',
+    )) as HTMLSelectElement
+    await waitFor(() => expect(select.value).toBe('b3'))
+    // 预算默认跟随选中题集的 cube，在选中态变化后的下一次 effect 里落定
+    await waitFor(() => expect(screen.getByLabelText('max_moves')).toHaveValue(100))
+    expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
   })
 
   it('surfaces providers load failures instead of an empty guide', async () => {

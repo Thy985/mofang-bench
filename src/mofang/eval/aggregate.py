@@ -10,14 +10,17 @@ from .scorer import wilson_interval
 
 def aggregate_report(
     benchmark: Benchmark,
+    tasks: list,
     results: list[EpisodeResult],
 ) -> dict[str, Any]:
+    # tasks 是实际执行的题目列表（可能是选题子集），必须与 results
+    # 一一对应；全集/子集都要按位置配对而不是 zip benchmark.tasks。
     solved = sum(1 for result in results if result.solved)
     total = len(results)
     by_bin: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"total": 0, "solved": 0, "moves": []}
     )
-    for result, task in zip(results, benchmark.tasks):
+    for result, task in zip(results, tasks):
         bucket = by_bin[task.bin]
         bucket["total"] += 1
         bucket["solved"] += int(result.solved)
@@ -60,6 +63,6 @@ def aggregate_report(
                 "failure_code": result.failure_code,
                 "error": result.error,
             }
-            for task, result in zip(benchmark.tasks, results)
+            for task, result in zip(tasks, results)
         ],
     }

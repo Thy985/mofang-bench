@@ -37,7 +37,13 @@ def create_app(
         lambda record: build_adapter(record, env_values)
     )
     sfactory = solver_factory or make_solver_factory(resolved.table_path)
-    service = RunService(database, events, pfactory, sfactory)
+    service = RunService(
+        database,
+        events,
+        pfactory,
+        sfactory,
+        max_parallel_episodes=resolved.max_parallel_episodes,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

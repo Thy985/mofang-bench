@@ -388,3 +388,120 @@ def test_snapshot_ignores_other_episodes_events(tmp_path: Path) -> None:
         )
         response = client.get(f"/api/runs/{run_id}/snapshot")
         assert response.json()["current_state"] == task_state.to_json()
+
+
+def test_batch_create_runs_for_multiple_providers(tmp_path: Path) -> None:
+    # make_app 里 factory 返回同一个 FakeProvider（有状态，逐次 pop），
+    # 两个 run 各跑 1 个 episode，所以要给 2 个相同的解题回合。
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            ),
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            ),
+        ],
+    )
+    with client:
+        first = seed(client)
+        second = client.post(
+            "/api/providers",
+            json={
+                "name": "p2",
+                "base_url": "http://localhost:2/v1",
+                "model": "m2",
+                "api_key_ref": "KEY",
+            },
+        ).json()["id"]
+        response = client.post(
+            "/api/runs",
+            json={
+                "provider_ids": [first, second],
+                "benchmark_id": benchmark_id,
+            },
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body["id"] == body["runs"][0]["id"]
+        assert [item["provider_id"] for item in body["runs"]] == [first, second]
+        for item in body["runs"]:
+            run = wait_finished(client, item["id"])
+            assert run["status"] == "finished"
+            assert run["totals"]["totals"]["solved"] == 1
+
+
+def test_batch_create_with_task_subset(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            )
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        response = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "task_keys": ["t1"],
+            },
+        )
+        assert response.status_code == 202
+        run_id = response.json()["id"]
+        wait_finished(client, run_id)
+        episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
+        assert [item["task_key"] for item in episodes] == ["t1"]
+        run = client.get(f"/api/runs/{run_id}").json()["run"]
+        # make_app 的题集只有 t1 一题，选题 t1 = 全集，partial 为 False；
+        # 子集对齐断言在 service 层测试里覆盖（双题集选题 t2）。
+        assert run["totals"]["partial"] is False
+
+
+def test_batch_create_rejects_bad_task_keys_and_providers(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(tmp_path, [])
+    with client:
+        provider_id = seed(client)
+        empty = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "task_keys": [],
+            },
+        )
+        assert empty.status_code == 400
+        invalid = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "task_keys": ["nope"],
+            },
+        )
+        assert invalid.status_code == 400
+        assert "nope" in invalid.json()["detail"]
+        missing = client.post(
+            "/api/runs",
+            json={
+                "provider_ids": [provider_id, "ghost"],
+                "benchmark_id": benchmark_id,
+            },
+        )
+        assert missing.status_code == 404
+        assert "ghost" in missing.json()["detail"]
+        none_given = client.post(
+            "/api/runs",
+            json={"benchmark_id": benchmark_id},
+        )
+        assert none_given.status_code == 400

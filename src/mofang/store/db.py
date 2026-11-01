@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS runs (
   error TEXT,
   created_at TEXT NOT NULL,
   started_at TEXT,
-  finished_at TEXT
+  finished_at TEXT,
+  task_keys_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -131,6 +132,14 @@ class Database:
             }
             if "api_key" not in columns:
                 conn.execute("ALTER TABLE providers ADD COLUMN api_key TEXT")
+            run_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(runs)")
+            }
+            if "task_keys_json" not in run_columns:
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN task_keys_json TEXT"
+                )
             conn.commit()
         finally:
             conn.close()

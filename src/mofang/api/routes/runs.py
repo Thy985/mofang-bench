@@ -36,27 +36,49 @@ def _run_out(run: dict) -> RunOut:
 @router.post("", status_code=202)
 async def start(payload: RunCreate, request: Request) -> dict:
     db = request.app.state.db
-    provider = get_provider(db, payload.provider_id)
+    provider_ids = payload.provider_ids or (
+        [payload.provider_id] if payload.provider_id else []
+    )
+    if not provider_ids:
+        raise HTTPException(400, "provider_id 或 provider_ids 至少填一个")
     benchmark = get_benchmark(db, payload.benchmark_id)
-    if provider is None:
-        raise HTTPException(404, "provider not found")
     if benchmark is None:
         raise HTTPException(404, "benchmark not found")
+    task_keys = payload.task_keys
+    if task_keys is not None:
+        if not task_keys:
+            raise HTTPException(400, "task_keys 不能是空列表（不选题请传 null）")
+        valid = {task.id for task in benchmark.tasks}
+        invalid = [key for key in task_keys if key not in valid]
+        if invalid:
+            raise HTTPException(
+                400, f"task_keys 不属于该题集: {', '.join(invalid[:5])}"
+            )
+    providers = []
+    for provider_id in provider_ids:
+        provider = get_provider(db, provider_id)
+        if provider is None:
+            raise HTTPException(404, f"provider not found: {provider_id}")
+        providers.append(provider)
     try:
         budget = asdict(budget_for(benchmark.cube, payload.budget))
     except TypeError as exc:
         raise HTTPException(400, f"invalid budget: {exc}") from exc
-    run_id = create_run(
-        db,
-        provider_id=provider.id,
-        benchmark_id=benchmark.id,
-        tool_mode=payload.tool_mode,
-        prompt_version="v1",
-        params=payload.params,
-        budget=budget,
-    )
-    request.app.state.service.start(run_id)
-    return {"id": run_id}
+    created = []
+    for provider in providers:
+        run_id = create_run(
+            db,
+            provider_id=provider.id,
+            benchmark_id=benchmark.id,
+            tool_mode=payload.tool_mode,
+            prompt_version="v1",
+            params=payload.params,
+            budget=budget,
+            task_keys=task_keys,
+        )
+        request.app.state.service.start(run_id)
+        created.append({"id": run_id, "provider_id": provider.id})
+    return {"id": created[0]["id"], "runs": created}
 
 
 @router.get("", response_model=list[RunOut])

@@ -214,11 +214,21 @@ export interface Report {
 }
 
 export interface RunCreate {
-  provider_id: string
+  // 单选兼容字段；新代码用 provider_ids 批量创建
+  provider_id?: string
+  provider_ids?: string[]
   benchmark_id: string
   tool_mode: ToolMode
+  // 选题子集（benchmark 内的 task id）；null/缺省 = 跑全集
+  task_keys?: string[] | null
   params: Record<string, unknown>
   budget: Partial<Budget>
+}
+
+// POST /api/runs 的响应：批量创建时 runs 列出每个新建 run
+export interface RunCreated {
+  id: string
+  provider_id: string
 }
 
 export interface ProgressPoint {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -83,9 +84,15 @@ def model_params_for(
 def make_solver_factory(
     table_path: Path,
 ) -> Callable[[str], ReferenceSolver]:
+    # 2x2 距离表是只读的（Table2x2Solver 只做 dict.get），
+    # 并行 run 各建一个 solver 时缓存加载结果，避免 pickle 表重复占内存。
+    @lru_cache(maxsize=1)
+    def load_table_cached(path: str):
+        return load_table(Path(path))
+
     def factory(cube: str) -> ReferenceSolver:
         if cube == "2x2":
-            return Table2x2Solver(load_table(table_path))
+            return Table2x2Solver(load_table_cached(str(table_path)))
         return RubikTwoPhaseClient()
 
     return factory

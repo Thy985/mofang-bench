@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { describeError } from '../lib/errors'
@@ -8,8 +8,14 @@ import {
   readPositiveInt,
   readPositiveNumber,
 } from '../lib/validate'
-import { useBenchmarks, useProviders, qk } from '../api/queries'
+import {
+  useBenchmarks,
+  useBenchmark,
+  useProviders,
+  qk,
+} from '../api/queries'
 import type {
+  BenchmarkDetail,
   BenchmarkSummary,
   Budget,
   CubeKind,
@@ -65,12 +71,19 @@ function toBudgetForm(budget: Budget): Record<BudgetKey, string> {
 export interface NewRunViewProps {
   providers: Provider[]
   benchmarks: BenchmarkSummary[]
+  // benchmarkId 提到页面层：页面用 useBenchmark 拉详情（含 tasks）传下来，
+  // View 保持纯展示、测试无需 QueryClient。可选仅为兼容旧用例直渲。
+  benchmarkId?: string
+  onBenchmarkChange?: (id: string) => void
+  benchmarkDetail?: BenchmarkDetail | null
+  benchmarkLoading?: boolean
   error?: string | null
   onCreate: (payload: RunCreate) => Promise<void>
 }
 
 const FIELD_IDS: Record<string, string> = {
-  providerId: 'newrun-provider',
+  providerIds: 'newrun-providers',
+  tasks: 'newrun-tasks',
   max_moves: 'newrun-budget-max_moves',
   max_tool_calls: 'newrun-budget-max_tool_calls',
   max_tokens: 'newrun-budget-max_tokens',
@@ -80,7 +93,8 @@ const FIELD_IDS: Record<string, string> = {
   params_max_tokens: 'newrun-params-max-tokens',
 }
 const FIELD_ORDER = [
-  'providerId',
+  'providerIds',
+  'tasks',
   'max_moves',
   'max_tool_calls',
   'max_tokens',
@@ -102,26 +116,33 @@ function focusFirstError(errors: Record<string, string>) {
 export function NewRunView({
   providers,
   benchmarks,
+  benchmarkId = '',
+  onBenchmarkChange = () => {},
+  benchmarkDetail = null,
+  benchmarkLoading = false,
   error,
   onCreate,
 }: NewRunViewProps) {
-  const [searchParams] = useSearchParams()
-  const requested = searchParams.get('benchmark')
-  const initialBenchmark =
-    benchmarks.find((item) => item.id === requested) ?? benchmarks[0]
-  const [providerId, setProviderId] = useState(providers[0]?.id ?? '')
-  const [benchmarkId, setBenchmarkId] = useState(
-    initialBenchmark?.id ?? '',
+  const [selectedProviders, setSelectedProviders] = useState<string[]>(
+    providers[0] ? [providers[0].id] : [],
   )
+  // null = 全选（默认）；选中题集切换后回落到全选
+  const [selectedTasks, setSelectedTasks] = useState<Set<string> | null>(null)
   const [toolMode, setToolMode] = useState<ToolMode>('both')
   const [budget, setBudget] = useState<Record<BudgetKey, string>>(
-    toBudgetForm(DEFAULTS[initialBenchmark?.cube ?? '2x2']),
+    toBudgetForm(DEFAULTS['2x2']),
   )
   const [temperature, setTemperature] = useState('')
   const [maxTokens, setMaxTokens] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
-  const selected = benchmarks.find((item) => item.id === benchmarkId)
+  // 页面层总传显式 benchmarkId；兜底首个题集，兼容未传 id 的直渲用例
+  const activeBenchmarkId = benchmarkId || benchmarks[0]?.id || ''
+  const selected = benchmarks.find((item) => item.id === activeBenchmarkId)
+  const tasks = useMemo(
+    () => benchmarkDetail?.tasks ?? [],
+    [benchmarkDetail],
+  )
 
   const selectedId = selected?.id
   const selectedCube = selected?.cube
@@ -130,8 +151,11 @@ export function NewRunView({
     if (selected) setBudget(toBudgetForm(DEFAULTS[selected.cube]))
   }, [selectedId, selectedCube])
 
-  function updateBudget(key: BudgetKey, value: string) {
-    setBudget((current) => ({ ...current, [key]: value }))
+  useEffect(() => {
+    setSelectedTasks(null)
+  }, [selectedId])
+
+  function clearError(key: string) {
     setFieldErrors((current) => {
       if (!(key in current)) return current
       const next = { ...current }
@@ -140,8 +164,41 @@ export function NewRunView({
     })
   }
 
+  function toggleProvider(id: string, checked: boolean) {
+    clearError('providerIds')
+    setSelectedProviders((current) =>
+      checked ? [...current, id] : current.filter((item) => item !== id),
+    )
+  }
+
+  function toggleTask(id: string, checked: boolean) {
+    clearError('tasks')
+    setSelectedTasks((current) => {
+      const all = new Set(tasks.map((task) => task.id))
+      if (checked) {
+        if (current === null) return null // 本来就是全选
+        const next = new Set(current)
+        next.add(id)
+        return next
+      }
+      // 从「全选」落到显式集合：先物化全集再移除
+      const next = current ?? all
+      const after = new Set(next)
+      after.delete(id)
+      return after
+    })
+  }
+
+  function isTaskChecked(id: string): boolean {
+    return selectedTasks === null || selectedTasks.has(id)
+  }
+
+  function updateBudget(key: BudgetKey, value: string) {
+    setBudget((current) => ({ ...current, [key]: value }))
+    clearError(key)
+  }
+
   // 留空语义保留：预算五项必填，可选参数留空 = 沿用 provider 默认，不报错。
-  // 与旧 parseBudget/parseParams 的双态签名（Budget | string）不同，
   // 一次收集全部字段错误做全显，再统一聚焦首个错误字段。
   function validate(): {
     errors: Record<string, string>
@@ -149,8 +206,14 @@ export function NewRunView({
     params: Record<string, number>
   } {
     const errors: Record<string, string> = {}
-    if (!providerId || !benchmarkId) {
-      errors.providerId = '请选择 provider 和 benchmark'
+    if (selectedProviders.length === 0) {
+      errors.providerIds = '请至少选择一个模型'
+    }
+    if (!activeBenchmarkId) {
+      errors.providerIds = errors.providerIds ?? '请选择 provider 和 benchmark'
+    }
+    if (tasks.length > 0 && selectedTasks !== null && selectedTasks.size === 0) {
+      errors.tasks = '请至少选择一道题'
     }
     const budgetOut: Partial<Budget> = {}
     let budgetOk = true
@@ -205,12 +268,18 @@ export function NewRunView({
       focusFirstError(errors)
       return
     }
+    const selectedKeys =
+      selectedTasks === null
+        ? null
+        : tasks.map((task) => task.id).filter((id) => selectedTasks.has(id))
+    const allSelected = selectedKeys !== null && selectedKeys.length === tasks.length
     setSubmitting(true)
     try {
       await onCreate({
-        provider_id: providerId,
-        benchmark_id: benchmarkId,
+        provider_ids: selectedProviders,
+        benchmark_id: activeBenchmarkId,
         tool_mode: toolMode,
+        task_keys: allSelected ? null : selectedKeys,
         params: parsedParams,
         budget: parsedBudget,
       })
@@ -220,6 +289,9 @@ export function NewRunView({
       setSubmitting(false)
     }
   }
+
+  const selectedCount =
+    selectedTasks === null ? tasks.length : selectedTasks.size
 
   return (
     <div className="space-y-6">
@@ -241,43 +313,70 @@ export function NewRunView({
         onSubmit={handleSubmit}
         className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
-        <label className="grid gap-1 text-sm">
-          <span>Provider</span>
-          <Select
-            id="newrun-provider"
-            value={providerId}
-            error={fieldErrors.providerId}
-            onChange={(event) => {
-              setProviderId(event.target.value)
-              setFieldErrors((current) => {
-                if (!('providerId' in current)) return current
-                const next = { ...current }
-                delete next.providerId
-                return next
-              })
-            }}
+        <div className="grid gap-2 md:col-span-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm">
+              模型（可多选，每个模型各建一个 run 并行执行）
+            </span>
+            <span className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  clearError('providerIds')
+                  setSelectedProviders(providers.map((item) => item.id))
+                }}
+              >
+                全选
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  clearError('providerIds')
+                  setSelectedProviders([])
+                }}
+              >
+                清空
+              </Button>
+            </span>
+          </div>
+          <div
+            id="newrun-providers"
+            data-testid="newrun-providers"
+            tabIndex={-1}
+            className="grid gap-1 rounded border border-line bg-surface-2 p-2 sm:grid-cols-2"
           >
             {providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name} ({provider.model})
-              </option>
+              <label
+                key={provider.id}
+                className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedProviders.includes(provider.id)}
+                  onChange={(event) =>
+                    toggleProvider(provider.id, event.target.checked)
+                  }
+                />
+                <span>
+                  {provider.name}
+                  <span className="text-text-dim">（{provider.model}）</span>
+                </span>
+              </label>
             ))}
-          </Select>
-        </label>
+          </div>
+          {fieldErrors.providerIds && (
+            <p role="alert" className="text-xs text-rose-300">
+              {fieldErrors.providerIds}
+            </p>
+          )}
+        </div>
         <label className="grid gap-1 text-sm">
           <span>Benchmark</span>
           <Select
-            value={benchmarkId}
-            onChange={(event) => {
-              setBenchmarkId(event.target.value)
-              // providerId 错误文案是「请选择 provider 和 benchmark」，跨字段
-              setFieldErrors((current) => {
-                if (!('providerId' in current)) return current
-                const next = { ...current }
-                delete next.providerId
-                return next
-              })
-            }}
+            value={activeBenchmarkId}
+            onChange={(event) => onBenchmarkChange(event.target.value)}
           >
             {benchmarks.map((benchmark) => (
               <option key={benchmark.id} value={benchmark.id}>
@@ -299,6 +398,76 @@ export function NewRunView({
             <option value="batch_only">apply_moves only</option>
           </Select>
         </label>
+        <div className="grid gap-2 md:col-span-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm">
+              选题子集（默认全选；只选一题可让多个模型同题并行对比）
+              {benchmarkLoading && (
+                <span className="ml-2 text-xs text-text-dim">题目加载中…</span>
+              )}
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="text-xs text-text-dim">
+                已选 {selectedCount}/{tasks.length}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  clearError('tasks')
+                  setSelectedTasks(null)
+                }}
+              >
+                全选
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  clearError('tasks')
+                  setSelectedTasks(new Set())
+                }}
+              >
+                清空
+              </Button>
+            </span>
+          </div>
+          {tasks.length > 0 && (
+            <div
+              id="newrun-tasks"
+              data-testid="newrun-tasks"
+              tabIndex={-1}
+              className="flex flex-wrap gap-1 rounded border border-line bg-surface-2 p-2"
+            >
+              {tasks.map((task) => (
+                <label
+                  key={task.id}
+                  className="flex items-center gap-1.5 rounded border border-line bg-surface px-2 py-0.5 text-xs hover:bg-surface-2"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isTaskChecked(task.id)}
+                    onChange={(event) =>
+                      toggleTask(task.id, event.target.checked)
+                    }
+                  />
+                  <span>
+                    #{task.id}
+                    <span className="text-text-dim">
+                      {' '}
+                      · bin {task.bin} · 参照 {task.reference_length} 步
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          {fieldErrors.tasks && (
+            <p role="alert" className="text-xs text-rose-300">
+              {fieldErrors.tasks}
+            </p>
+          )}
+        </div>
         <div className="grid gap-2 md:col-span-2">
           <p className="text-sm text-text-dim">
             预算上限（未配置价格，仅统计 tokens）
@@ -346,12 +515,7 @@ export function NewRunView({
                 error={fieldErrors.temperature}
                 onChange={(event) => {
                   setTemperature(event.target.value)
-                  setFieldErrors((current) => {
-                    if (!('temperature' in current)) return current
-                    const next = { ...current }
-                    delete next.temperature
-                    return next
-                  })
+                  clearError('temperature')
                 }}
               />
               <span className="text-text-dim">0 到 2，留空不覆盖</span>
@@ -367,12 +531,7 @@ export function NewRunView({
                 error={fieldErrors.params_max_tokens}
                 onChange={(event) => {
                   setMaxTokens(event.target.value)
-                  setFieldErrors((current) => {
-                    if (!('params_max_tokens' in current)) return current
-                    const next = { ...current }
-                    delete next.params_max_tokens
-                    return next
-                  })
+                  clearError('params_max_tokens')
                 }}
               />
               <span className="text-text-dim">留空不覆盖</span>
@@ -395,11 +554,32 @@ export default function NewRunPage() {
   const toast = useToast()
   const providers = useProviders()
   const benchmarks = useBenchmarks()
+  const [searchParams] = useSearchParams()
+  const requested = searchParams.get('benchmark')
+  const [benchmarkId, setBenchmarkId] = useState('')
+
+  // 数据到位后落初始值：URL ?benchmark= 指定优先，否则取列表第一项
+  useEffect(() => {
+    if (benchmarkId) return
+    const list = benchmarks.data ?? []
+    if (list.length === 0) return
+    const initial =
+      list.find((item) => item.id === requested)?.id ?? list[0].id
+    setBenchmarkId(initial)
+  }, [benchmarkId, requested, benchmarks.data])
+
+  const detail = useBenchmark(benchmarkId || undefined)
   const create = useMutation({
     mutationFn: api.runs.create,
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: qk.runs })
-      navigate(`/runs/${encodeURIComponent(data.id)}`)
+      if (data.runs.length > 1) {
+        toast.success(`已创建 ${data.runs.length} 个 run 并行执行`)
+        navigate('/runs')
+      } else {
+        toast.success('Run 已创建')
+        navigate(`/runs/${encodeURIComponent(data.id)}`)
+      }
     },
   })
 
@@ -413,11 +593,14 @@ export default function NewRunPage() {
     <NewRunView
       providers={providers.data ?? []}
       benchmarks={benchmarks.data ?? []}
+      benchmarkId={benchmarkId}
+      onBenchmarkChange={setBenchmarkId}
+      benchmarkDetail={detail.data ?? null}
+      benchmarkLoading={detail.isFetching}
       error={loadError ? describeError(loadError) : null}
       onCreate={async (payload) => {
         try {
           await create.mutateAsync(payload)
-          toast.success('Run 已创建')
         } catch (err) {
           toastError(toast, err)
           throw err

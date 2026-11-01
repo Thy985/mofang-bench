@@ -109,7 +109,7 @@ async def _run(args: argparse.Namespace) -> int:
         if adapter_to_close is not None:
             await adapter_to_close.close()
 
-    report = aggregate_report(benchmark, results)
+    report = aggregate_report(benchmark, benchmark.tasks, results)
     report["provider"] = args.provider
     report["model"] = args.model
     out_path = Path(args.out)

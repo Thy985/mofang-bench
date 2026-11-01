@@ -26,11 +26,18 @@ def create_run(
     prompt_version: str,
     params: dict[str, Any],
     budget: dict[str, Any],
+    task_keys: list[str] | None = None,
 ) -> str:
     run_id = uuid.uuid4().hex
     with db.transaction() as conn:
         conn.execute(
-            "INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            """
+            INSERT INTO runs
+              (id, provider_id, benchmark_id, tool_mode, prompt_version,
+               params_json, budget_json, status, totals_json, error,
+               created_at, started_at, finished_at, task_keys_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
             (
                 run_id,
                 provider_id,
@@ -45,6 +52,7 @@ def create_run(
                 now(),
                 None,
                 None,
+                _dump(task_keys) if task_keys is not None else None,
             ),
         )
     return run_id
@@ -106,6 +114,11 @@ def _run_dict(row: Any) -> dict[str, Any]:
         "status": row["status"],
         "totals": json.loads(row["totals_json"]) if row["totals_json"] else None,
         "error": row["error"],
+        "task_keys": (
+            json.loads(row["task_keys_json"])
+            if row["task_keys_json"]
+            else None
+        ),
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],

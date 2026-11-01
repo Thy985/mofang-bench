@@ -136,6 +136,12 @@ class EpisodeRunner:
             tool for tool in TOOLS if tool["function"]["name"] in names
         ]
 
+    async def _distance(self, state: CubeState) -> int | None:
+        # 3x3 参照求解器是同步子进程管道，直接调用会卡住事件循环，
+        # 并行 run 的 SSE 流会被一次 distance 调用拖住；丢线程池执行。
+        # 每个 run 持有独立 solver 实例且 run 内串行，线程安全。
+        return await asyncio.to_thread(self.solver.distance, state)
+
     async def _chat(
         self,
         messages: list[dict[str, Any]],
@@ -196,7 +202,7 @@ class EpisodeRunner:
         nudges = 0
         status = EpisodeStatus.STOPPED_UNSOLVED
         error_message: str | None = None
-        start_length = self.solver.distance(initial) or task.reference_length
+        start_length = (await self._distance(initial)) or task.reference_length
         nudge: str | None = None
 
         def notify(kind: str, payload: dict[str, Any]) -> None:
@@ -271,7 +277,7 @@ class EpisodeRunner:
                     },
                     result={"content": turn.content, "thinking": turn.reasoning},
                     state=executor.state.to_json(),
-                    reference_length_after=self.solver.distance(executor.state),
+                    reference_length_after=await self._distance(executor.state),
                 )
             )
             if turn.tool_calls:
@@ -319,7 +325,7 @@ class EpisodeRunner:
                             "payload": outcome.payload,
                         },
                     )
-                    length_after = self.solver.distance(executor.state)
+                    length_after = await self._distance(executor.state)
                     steps.append(
                         StepRecord(
                             seq=len(steps),
@@ -380,7 +386,7 @@ class EpisodeRunner:
                 )
 
         final_state = executor.state
-        final_length = self.solver.distance(final_state)
+        final_length = await self._distance(final_state)
         reference_length = start_length
         efficiency = (
             executor.moves_used / reference_length

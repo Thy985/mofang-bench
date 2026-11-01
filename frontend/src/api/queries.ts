@@ -32,7 +32,18 @@ export function useBenchmark(id: string | undefined) {
 }
 
 export function useRuns() {
-  return useQuery({ queryKey: qk.runs, queryFn: api.runs.list })
+  return useQuery({
+    queryKey: qk.runs,
+    queryFn: api.runs.list,
+    // 有 queued/running 的 run 时轮询刷新，让列表状态跟得上并行执行
+    refetchInterval: (query) => {
+      const data = query.state.data
+      return Array.isArray(data) &&
+        data.some((run) => run.status === 'queued' || run.status === 'running')
+        ? 2000
+        : false
+    },
+  })
 }
 
 export function useRun(id: string | undefined) {

@@ -63,9 +63,14 @@ class BenchmarkDetail(BenchmarkOut):
 
 
 class RunCreate(BaseModel):
-    provider_id: str
+    provider_id: str = ""
     benchmark_id: str
     tool_mode: Literal["both", "turn_only", "batch_only"] = "both"
+    # 批量创建：为每个 provider 各建一个 run 并并行执行。
+    # provider_ids 非空时优先于 provider_id（单选兼容字段）。
+    provider_ids: list[str] = Field(default_factory=list)
+    # 选题子集：benchmark 内的 task key 列表；None = 跑全集。
+    task_keys: list[str] | None = None
     params: dict[str, Any] = Field(default_factory=dict)
     budget: dict[str, Any] = Field(default_factory=dict)
 

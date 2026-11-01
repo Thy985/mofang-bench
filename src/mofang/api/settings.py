@@ -13,6 +13,9 @@ class Settings:
     web_dir: Path | None = Path("frontend/dist")
     host: str = "127.0.0.1"
     port: int = 8000
+    # 所有 run 共享的 episode 并发额度上限：控制同时打向各 provider 的
+    # LLM 请求总量。3x3 每 run 还会有一个 twophase 子进程，调大时留意内存。
+    max_parallel_episodes: int = 3
     cors_origins: tuple[str, ...] = (
         "http://127.0.0.1:5173",
         "http://localhost:5173",
@@ -30,4 +33,7 @@ class Settings:
             web_dir=Path(web_raw) if web_raw else None,
             host=values.get("MOFANG_HOST", "127.0.0.1"),
             port=int(values.get("MOFANG_PORT", "8000")),
+            max_parallel_episodes=int(
+                values.get("MOFANG_MAX_PARALLEL_EPISODES", "3")
+            ),
         )

@@ -11,6 +11,7 @@ import type {
   Report,
   Run,
   RunCreate,
+  RunCreated,
   Snapshot,
   Step,
 } from './types'
@@ -100,7 +101,7 @@ export const api = {
   runs: {
     list: () => request<Run[]>('/runs'),
     create: (payload: RunCreate) =>
-      request<{ id: string }>('/runs', post(payload)),
+      request<{ id: string; runs: RunCreated[] }>('/runs', post(payload)),
     get: (id: string) =>
       request<{ run: Run; episodes: Episode[] }>(
         `/runs/${encodeURIComponent(id)}`,
