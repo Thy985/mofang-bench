@@ -2,6 +2,7 @@ import type { HTMLAttributes } from 'react'
 
 const TONES = {
   danger: 'border-danger bg-rose-950/40 text-rose-300',
+  success: 'border-accent bg-accent-soft/40 text-accent',
   info: 'border-line bg-surface text-text',
 } as const
 

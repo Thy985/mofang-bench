@@ -12,6 +12,7 @@ import type {
   Run,
   RunCreate,
   RunCreated,
+  SelfcheckResult,
   Snapshot,
   Step,
 } from './types'
@@ -97,6 +98,11 @@ export const api = {
       request<BenchmarkDetail>('/benchmarks', post(payload)),
     get: (id: string) =>
       request<BenchmarkDetail>(`/benchmarks/${encodeURIComponent(id)}`),
+    selfcheck: (id: string) =>
+      request<SelfcheckResult>(
+        `/benchmarks/${encodeURIComponent(id)}/selfcheck`,
+        { method: 'POST' },
+      ),
   },
   runs: {
     list: () => request<Run[]>('/runs'),

@@ -61,8 +61,18 @@ class EpisodeResult:
     final_state: dict[str, Any]
     failure_code: str | None
     error: str | None = None
+    # 本局内 provider 退避重试 + ProviderError 总数（进出场差值）
+    provider_errors: int = 0
     plan: dict[str, Any] | None = None
     steps: list[StepRecord] = field(default_factory=list)
+
+
+def _provider_stats(provider: Any) -> dict[str, int]:
+    """读取 adapter 的请求统计快照；无 stats 的 provider（Fake 等）视为全零。"""
+    stats = getattr(provider, "stats", None)
+    if not isinstance(stats, dict):
+        return {}
+    return {key: int(value) for key, value in stats.items()}
 
 
 class ThinkingThrottle:
@@ -216,6 +226,7 @@ class EpisodeRunner:
         error_message: str | None = None
         start_length = (await self._distance(initial)) or task.reference_length
         nudge: str | None = None
+        stats_start = _provider_stats(self.provider)
 
         def notify(kind: str, payload: dict[str, Any]) -> None:
             if emit is not None:
@@ -437,6 +448,12 @@ class EpisodeRunner:
             final_state.is_solved(),
         )
         failure_code = None if status == EpisodeStatus.SOLVED else status.value
+        # provider_errors = 本局内退避重试 + 最终 ProviderError（进出场差值）
+        stats_end = _provider_stats(self.provider)
+        provider_errors = sum(
+            stats_end.get(key, 0) - stats_start.get(key, 0)
+            for key in ("retries", "errors")
+        )
         result = EpisodeResult(
             status=status,
             solved=final_state.is_solved(),
@@ -446,6 +463,7 @@ class EpisodeRunner:
             progress_ratio=progress,
             invalid_calls=executor.invalid_calls,
             protocol_errors=executor.protocol_errors,
+            provider_errors=provider_errors,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=int((time.monotonic() - started) * 1000),

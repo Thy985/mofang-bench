@@ -7,6 +7,7 @@ from ...store.benchmarks import (
     list_benchmarks,
     save_benchmark,
 )
+from ...runner.selfcheck import run_selfcheck
 from ...tasks.generator import generate_benchmark
 from ...tasks.models import Benchmark
 from ..schemas import BenchmarkCreate, BenchmarkDetail, BenchmarkOut
@@ -88,3 +89,37 @@ def detail(benchmark_id: str, request: Request) -> BenchmarkDetail:
     if benchmark is None:
         raise HTTPException(404, "benchmark not found")
     return _detail(benchmark)
+
+
+# 同步返回：无 LLM 参与，参照解 + 工具链执行是秒级的；题目很多的题集
+# 截前 8 题以免拖住请求。
+SELFCHECK_MAX_TASKS = 8
+
+
+@router.post("/{benchmark_id}/selfcheck")
+async def selfcheck(benchmark_id: str, request: Request) -> dict:
+    benchmark = get_benchmark(request.app.state.db, benchmark_id)
+    if benchmark is None:
+        raise HTTPException(404, "benchmark not found")
+    solver = request.app.state.solver_factory(benchmark.cube)
+    try:
+        items = run_selfcheck(
+            benchmark.tasks[:SELFCHECK_MAX_TASKS], solver
+        )
+    finally:
+        close = getattr(solver, "close", None)
+        if close is not None:
+            close()
+    return {
+        "ok": all(item.ok for item in items) and bool(items),
+        "checked": len(items),
+        "items": [
+            {
+                "task_id": item.task_id,
+                "ok": item.ok,
+                "moves": item.moves,
+                "detail": item.detail,
+            }
+            for item in items
+        ],
+    }

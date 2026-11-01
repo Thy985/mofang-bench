@@ -130,6 +130,23 @@ export interface BinStats {
   mean_moves: number
 }
 
+// 失败归因（eval/attribution.py）：side=user 的是用户取消，不计入两侧
+export interface AttributionItem {
+  task_id: string
+  side: 'model' | 'env' | 'user'
+  code: string
+  signals: string[]
+}
+
+export interface AttributionSummary {
+  failed: number
+  env: number
+  model: number
+  codes: Record<string, number>
+  signals: Record<string, number>
+  items: AttributionItem[]
+}
+
 // 后端 `aggregate_report()` 的完整返回；run.totals 与 run.finished 事件都携带它。
 export interface AggregateReport {
   benchmark_id: string
@@ -138,6 +155,7 @@ export interface AggregateReport {
   partial: boolean
   totals: AggregateTotals
   by_bin: Record<string, BinStats>
+  attribution?: AttributionSummary
   episodes: Array<{
     task_id: string
     status: string
@@ -224,6 +242,7 @@ export interface Report {
   partial: boolean
   totals: AggregateTotals
   by_bin: Record<string, BinStats>
+  attribution?: AttributionSummary
   episodes: Episode[]
 }
 
@@ -245,6 +264,20 @@ export interface RunCreate {
 export interface RunCreated {
   id: string
   provider_id: string
+}
+
+// Harness 自检（POST /api/benchmarks/:id/selfcheck）
+export interface SelfcheckItem {
+  task_id: string
+  ok: boolean
+  moves: number
+  detail: string
+}
+
+export interface SelfcheckResult {
+  ok: boolean
+  checked: number
+  items: SelfcheckItem[]
 }
 
 export interface ProgressPoint {

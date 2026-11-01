@@ -396,3 +396,38 @@ async def test_plan_tool_absent_without_plan_mode(
     assert "submit_plan" in [
         tool["function"]["name"] for tool in runner_plan._tools()
     ]
+
+
+async def test_provider_errors_counted_from_stats_delta(
+    table_solver: Table2x2Solver,
+) -> None:
+    class StatsProvider:
+        def __init__(self) -> None:
+            self.stats = {"requests": 0, "retries": 0, "errors": 0}
+
+        async def probe_tools(self) -> bool:
+            return True
+
+        async def chat(self, messages, tools, params):
+            self.stats["requests"] += 1
+            # 模拟一次 429/5xx 退避重试
+            self.stats["retries"] += 1
+            return ModelTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="apply_moves",
+                        arguments={"moves": ["R'"]},
+                    )
+                ]
+            )
+
+    task = make_task(table_solver, ["R"])
+    provider = StatsProvider()
+    result = await EpisodeRunner(
+        provider=provider,
+        solver=table_solver,
+        budget=Budget(max_moves=10),
+    ).run(task)
+    assert result.solved
+    assert result.provider_errors == 1

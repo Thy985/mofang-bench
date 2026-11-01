@@ -67,6 +67,10 @@ class OpenAICompatibleAdapter:
         self.stream = stream
         self.downgraded = False
         self.max_tokens_downgraded = False
+        # 失败归因用的计数器：requests=HTTP 尝试次数（含重试）、
+        # retries=退避重试次数、errors=最终抛出的 ProviderError 次数。
+        # EpisodeRunner 用进出场差值把环境侧异常摊到具体 episode。
+        self.stats = {"requests": 0, "retries": 0, "errors": 0}
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0)
         )
@@ -91,11 +95,16 @@ class OpenAICompatibleAdapter:
             payload = self._build_payload(messages, tools, params, stream=False)
             response = await self._post(payload)
         except ProviderError as exc:
+            self.stats["errors"] += 1
             params = self._downgraded_max_tokens(exc, params)
             if params is None:
                 raise
             payload = self._build_payload(messages, tools, params, stream=False)
-            response = await self._post(payload)
+            try:
+                response = await self._post(payload)
+            except ProviderError as retry_exc:
+                self.stats["errors"] += 1
+                raise retry_exc
         return self._parse(response)
 
     async def chat_stream(
@@ -111,11 +120,16 @@ class OpenAICompatibleAdapter:
             payload = self._build_payload(messages, tools, params, stream=True)
             response = await self._open_stream(payload)
         except ProviderError as exc:
+            self.stats["errors"] += 1
             params = self._downgraded_max_tokens(exc, params)
             if params is None:
                 raise
             payload = self._build_payload(messages, tools, params, stream=True)
-            response = await self._open_stream(payload)
+            try:
+                response = await self._open_stream(payload)
+            except ProviderError as retry_exc:
+                self.stats["errors"] += 1
+                raise retry_exc
         if response is None:
             self.downgraded = True
             return await self.chat(messages, tools, params)
@@ -169,6 +183,7 @@ class OpenAICompatibleAdapter:
         """打开流式响应；返回 None 表示网关不支持流式（应降级）。"""
         last_error: str | None = None
         for attempt in range(4):
+            self.stats["requests"] += 1
             try:
                 response = await self._client.send(
                     self._client.build_request(
@@ -182,6 +197,7 @@ class OpenAICompatibleAdapter:
             except httpx.TransportError as exc:
                 last_error = str(exc) or f"request timed out after {self.timeout:g}s"
                 if attempt < 3:
+                    self.stats["retries"] += 1
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
                 kind = (
@@ -194,6 +210,7 @@ class OpenAICompatibleAdapter:
                 last_error = (await response.aread()).decode(errors="replace")
                 await response.aclose()
                 if attempt < 3:
+                    self.stats["retries"] += 1
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
                 kind = "rate_limit" if response.status_code == 429 else "server"
@@ -299,6 +316,7 @@ class OpenAICompatibleAdapter:
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: str | None = None
         for attempt in range(4):
+            self.stats["requests"] += 1
             try:
                 response = await self._client.post(
                     f"{self.base_url}/chat/completions",
@@ -308,6 +326,7 @@ class OpenAICompatibleAdapter:
             except httpx.TransportError as exc:
                 last_error = str(exc) or f"request timed out after {self.timeout:g}s"
                 if attempt < 3:
+                    self.stats["retries"] += 1
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
                 kind = (
@@ -319,6 +338,7 @@ class OpenAICompatibleAdapter:
             if response.status_code == 429 or response.status_code >= 500:
                 last_error = response.text
                 if attempt < 3:
+                    self.stats["retries"] += 1
                     await asyncio.sleep(self.retry_delay * (2**attempt))
                     continue
                 kind = "rate_limit" if response.status_code == 429 else "server"

@@ -167,6 +167,45 @@ export function ResultView({
         </p>
       )}
 
+      {report.attribution && report.attribution.failed > 0 && (
+        <div
+          data-testid="attribution"
+          className="space-y-2 rounded border border-line bg-surface p-4 text-sm"
+        >
+          <h3 className="text-sm font-medium text-text">失败归因</h3>
+          <p>
+            失败 {report.attribution.failed}
+            {' = '}
+            环境侧 {report.attribution.env}
+            {' + '}
+            模型侧 {report.attribution.model}
+            {report.attribution.failed >
+              report.attribution.env + report.attribution.model && (
+              <span className="text-text-dim">
+                {' '}
+                （其余为用户取消，不计入两侧）
+              </span>
+            )}
+          </p>
+          {Object.keys(report.attribution.signals).length > 0 && (
+            <ul className="list-disc space-y-0.5 pl-5 text-text-dim">
+              {Object.entries(report.attribution.signals).map(
+                ([signal, count]) => (
+                  <li key={signal}>
+                    {signal}
+                    {count > 1 && `（× ${count}）`}
+                  </li>
+                ),
+              )}
+            </ul>
+          )}
+          <p className="text-xs text-text-dim">
+            harness 工具链本身的正确性由题集详情页的「Harness
+            自检」独立验证；两侧的详细定义见 README「失败归因」。
+          </p>
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3 text-sm">
         <a
           data-testid="export-json"

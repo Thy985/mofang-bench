@@ -5,6 +5,7 @@ from typing import Any
 
 from ..runner.episode import EpisodeResult
 from ..tasks.models import Benchmark
+from .attribution import attribution_summary
 from .scorer import wilson_interval
 
 
@@ -47,6 +48,7 @@ def aggregate_report(
             "ci95": list(wilson_interval(solved, total)),
         },
         "by_bin": bins,
+        "attribution": attribution_summary(tasks, results),
         "episodes": [
             {
                 "task_id": task.id,

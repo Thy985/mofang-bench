@@ -360,6 +360,62 @@ function renderPage(options: { snapshotState: CubeState | null }) {
   )
 }
 
+describe('ResultView attribution', () => {
+  const failingReport: Report = {
+    ...report,
+    totals: { tasks: 2, solved: 0, solve_rate: 0, ci95: [0, 0.6] },
+    episodes: [
+      { ...episode, id: 'e1', status: 'stopped_unsolved', solved: false, failure_code: 'stopped_unsolved' },
+      { ...episode, id: 'e2', status: 'provider_error', solved: false, failure_code: 'provider_error' },
+    ],
+    attribution: {
+      failed: 2,
+      env: 1,
+      model: 1,
+      codes: { stopped_unsolved: 1, provider_error: 1 },
+      signals: {
+        '本局发生网络/服务端错误或重试': 1,
+        '模型未取得任何进展（progress=0）': 1,
+      },
+      items: [
+        { task_id: 'b1:t1', side: 'model', code: 'stopped_unsolved', signals: [] },
+        { task_id: 'b1:t1', side: 'env', code: 'provider_error', signals: [] },
+      ],
+    },
+  }
+
+  it('失败时渲染归因两侧与信号', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={failingReport}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    const section = screen.getByTestId('attribution')
+    expect(section).toHaveTextContent('失败 2 = 环境侧 1 + 模型侧 1')
+    expect(section).toHaveTextContent('网络/服务端')
+    expect(section).toHaveTextContent('未取得任何进展')
+  })
+
+  it('全部解出时不渲染归因区', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={report}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByTestId('attribution')).not.toBeInTheDocument()
+  })
+})
+
 describe('RunPage', () => {
   it('falls back to the task state when the snapshot has no live state', async () => {
     renderPage({ snapshotState: null })

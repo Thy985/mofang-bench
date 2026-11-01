@@ -100,3 +100,29 @@ def test_benchmark_name_with_path_characters_is_rejected(tmp_path) -> None:
         )
         assert ok.status_code == 201
         assert ok.json()["id"] == "demo 基准-v1-2x2-3"
+
+
+def test_benchmark_selfcheck(tmp_path) -> None:
+    client = make_client(tmp_path)
+    with client:
+        created = client.post(
+            "/api/benchmarks",
+            json={
+                "name": "check",
+                "cube": "2x2",
+                "depths": [1],
+                "per_depth": 1,
+                "seed": 3,
+                "solver": "table",
+            },
+        ).json()
+        response = client.post(f"/api/benchmarks/{created['id']}/selfcheck")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["checked"] == 1
+        assert body["items"][0]["ok"] is True
+        assert body["items"][0]["moves"] == 1
+        assert (
+            client.post("/api/benchmarks/nope/selfcheck").status_code == 404
+        )

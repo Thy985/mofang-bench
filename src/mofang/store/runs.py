@@ -210,7 +210,7 @@ def finish_episode(db: Database, episode_id: str, result: EpisodeResult) -> None
                 result.progress_ratio,
                 result.invalid_calls,
                 result.protocol_errors,
-                0,
+                result.provider_errors,
                 result.tokens_in,
                 result.tokens_out,
                 result.latency_ms,

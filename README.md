@@ -183,6 +183,24 @@ U4 信息密度已落地：Runs 页支持 provider/benchmark/状态筛选与创�
 /compare 对比页——解出率差值（bootstrap CI95）+ 逐题 delta、解出状态不同的
 行高亮；报告分箱以条形图呈现（含 CI95 须线），逐题表新增 tokens 与耗时列。
 
+## 失败归因（模型问题还是 harness 问题？）
+
+一次 agent 失败的责任判断由三件工具组合回答：
+
+1. **Harness 自检**（题集详情页按钮 / `POST /api/benchmarks/:id/selfcheck`）：
+   用参照求解器的解走**同一条**工具链（ToolExecutor + 状态引擎 + 打分），
+   不调 LLM。全部通过 = 这套 harness 对「正确的解题者」是可行的，
+   工具链/引擎没有 bug；这是最硬的证据。
+2. **失败归因报告**（run 报告底部「失败归因」区）：
+   `provider_error / timeout / interrupted` 记环境侧（网络、服务端、限流、
+   进程中断），`stopped_unsolved / budget_exceeded / protocol_error` 记模型侧；
+   信号纠正误判——progress≥0.5 的失败可能是预算太紧（可调大 budget），
+   大量协议错误可能是提示词/工具描述不清（harness 侧可改进），
+   零进展是模型侧证据。episode 级的 `provider_errors` 现在记录真实的
+   退避重试 + ProviderError 次数（进出场差值）。
+3. **对照消融**：计划模式是 per-run 开关（同模型开/关对比）；
+   New Run 支持多选模型批量建 run——同一 provider 勾选两次即可重复 N 次测方差。
+
 ## GPL 边界
 
 `RubikTwoPhase` 是 GPLv3+。主进程不 `import twophase`；只有
