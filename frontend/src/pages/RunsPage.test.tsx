@@ -135,14 +135,14 @@ function rowIds(): string[] {
 describe('RunsView 筛选与排序', () => {
   it('默认全部行按创建时间降序', () => {
     renderView()
-    expect(rowIds()).toEqual(['r-newest', 'r-middle', 'r-older'])
+    expect(rowIds()).toEqual(['local', 'local', 'remote'])
   })
 
   it('按 provider 筛选只剩匹配行', async () => {
     const user = userEvent.setup()
     renderView()
     await user.selectOptions(screen.getByLabelText('provider 筛选'), 'p2')
-    expect(rowIds()).toEqual(['r-older'])
+    expect(rowIds()).toEqual(['remote'])
   })
 
   it('组合筛选无结果出无匹配空态，清除后恢复', async () => {
@@ -163,19 +163,20 @@ describe('RunsView 筛选与排序', () => {
 
   it('初始 URL 参数直接生效', () => {
     renderView({}, '/runs?provider=p2')
-    expect(rowIds()).toEqual(['r-older'])
+    expect(rowIds()).toEqual(['remote'])
   })
 
-  it('点解出率表头先降序再升序，并把排序写进 URL', async () => {
+  it('排序 Select 切换解出率降序/升序，并把排序写进 URL', async () => {
     const user = userEvent.setup()
     renderView()
-    await user.click(screen.getByRole('button', { name: '解出率' }))
-    expect(rowIds()).toEqual(['r-older', 'r-middle', 'r-newest'])
+    const sortSelect = screen.getByLabelText('排序')
+    await user.selectOptions(sortSelect, 'solve_rate:desc')
+    expect(rowIds()).toEqual(['remote', 'local', 'local'])
     expect(screen.getByTestId('loc')).toHaveTextContent(
       'sort=solve_rate&order=desc',
     )
-    await user.click(screen.getByRole('button', { name: '解出率 ↓' }))
-    expect(rowIds()).toEqual(['r-newest', 'r-middle', 'r-older'])
+    await user.selectOptions(sortSelect, 'solve_rate:asc')
+    expect(rowIds()).toEqual(['local', 'local', 'remote'])
     expect(screen.getByTestId('loc')).toHaveTextContent(
       'sort=solve_rate&order=asc',
     )

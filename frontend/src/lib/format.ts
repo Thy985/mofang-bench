@@ -19,6 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
   solved: '已解出',
   stopped_unsolved: '停手未解',
   budget_exceeded: '预算耗尽',
+  model_truncation_loop: '截断循环',
   timeout: '超时',
   protocol_error: '协议错误',
   provider_error: 'provider 错误',
@@ -53,6 +54,24 @@ export function formatTokens(value: number | null | undefined): string {
 
 export function statusLabel(status: string): string {
   return STATUS_LABELS[status] ?? status
+}
+
+// episode.error 常是 JSON 字符串（如 {"error":{"message":...}}），
+// 这里尽量取出可读消息；非 JSON 用原文。max 控制摘要长度。
+export function errorSummary(
+  error: string | null | undefined,
+  max = 80,
+): string {
+  if (!error) return '—'
+  let text = error
+  try {
+    const parsed = JSON.parse(error)
+    const message = parsed?.error?.message ?? parsed?.message
+    if (typeof message === 'string') text = message
+  } catch {
+    // 非 JSON，直接用原文
+  }
+  return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
 export function shortId(id: string): string {

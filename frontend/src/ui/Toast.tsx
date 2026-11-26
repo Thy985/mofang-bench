@@ -57,10 +57,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 transition={{ duration: 0.15 }}
                 data-testid="toast"
                 role={toast.tone === 'error' ? 'alert' : 'status'}
-                className={`pointer-events-auto rounded-md border px-3 py-2 text-sm shadow-lg ${
+                className={`pointer-events-auto rounded-lg border px-3.5 py-2.5 text-sm shadow-[0_16px_48px_rgba(0,0,0,0.55)] ${
                   toast.tone === 'success'
-                    ? 'border-accent-dim bg-emerald-950/90 text-emerald-200'
-                    : 'border-danger bg-rose-950/90 text-rose-200'
+                    ? 'border-accent/40 bg-[#15181c] text-accent'
+                    : 'border-danger/40 bg-[#15181c] text-rose-300'
                 }`}
               >
                 {toast.message}

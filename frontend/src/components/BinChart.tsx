@@ -38,7 +38,7 @@ export function BinChart({ byBin }: { byBin: Record<string, BinStats> }) {
               y={barY}
               width={Math.max(0, x(stats.solve_rate) - LABEL_WIDTH)}
               height={BAR_HEIGHT}
-              fill="#059669"
+              className="fill-accent"
             />
             <line
               data-testid="bin-ci"

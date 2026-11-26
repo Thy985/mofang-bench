@@ -365,8 +365,8 @@ describe('ResultView attribution', () => {
     ...report,
     totals: { tasks: 2, solved: 0, solve_rate: 0, ci95: [0, 0.6] },
     episodes: [
-      { ...episode, id: 'e1', status: 'stopped_unsolved', solved: false, failure_code: 'stopped_unsolved' },
-      { ...episode, id: 'e2', status: 'provider_error', solved: false, failure_code: 'provider_error' },
+      { ...episode, id: 'e1', status: 'stopped_unsolved', solved: false, failure_code: 'stopped_unsolved', task_key: 'b1:t1', error: '{"error":{"message":"模型连续 5 轮无有效动作"}}' },
+      { ...episode, id: 'e2', status: 'provider_error', solved: false, failure_code: 'provider_error', task_key: 'b1:t2', error: '{"error":{"message":"[429] 请登录platform进行实名认证以获取更高rpm"}}' },
     ],
     attribution: {
       failed: 2,
@@ -374,12 +374,14 @@ describe('ResultView attribution', () => {
       model: 1,
       codes: { stopped_unsolved: 1, provider_error: 1 },
       signals: {
-        '本局发生网络/服务端错误或重试': 1,
+        '触发速率限制（HTTP 429）：降低并发、更换 key 或加大退避间隔': 1,
         '模型未取得任何进展（progress=0）': 1,
       },
+      provider_errors_total: 2,
+      protocol_errors_total: 0,
       items: [
-        { task_id: 'b1:t1', side: 'model', code: 'stopped_unsolved', signals: [] },
-        { task_id: 'b1:t1', side: 'env', code: 'provider_error', signals: [] },
+        { task_id: 'b1:t1', side: 'model', code: 'stopped_unsolved', signals: ['模型未取得任何进展（progress=0）'] },
+        { task_id: 'b1:t2', side: 'env', code: 'provider_error', signals: ['触发速率限制（HTTP 429）：降低并发、更换 key 或加大退避间隔'] },
       ],
     },
   }
@@ -397,8 +399,52 @@ describe('ResultView attribution', () => {
     )
     const section = screen.getByTestId('attribution')
     expect(section).toHaveTextContent('失败 2 = 环境侧 1 + 模型侧 1')
-    expect(section).toHaveTextContent('网络/服务端')
+    expect(section).toHaveTextContent('速率限制')
+    expect(section).toHaveTextContent('provider 退避/错误 共 2 次')
     expect(section).toHaveTextContent('未取得任何进展')
+    // 计数文案不再混在 signals 里
+    expect(section).not.toHaveTextContent('本局共 2 次')
+  })
+
+  it('归因卡片列出逐题明细：侧别 / 失败码 / 信号 / 原始错误', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={failingReport}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    const items = screen.getAllByTestId('attribution-item')
+    expect(items).toHaveLength(2)
+    expect(items[0]).toHaveTextContent('b1:t1')
+    expect(items[0]).toHaveTextContent('模型侧')
+    expect(items[0]).toHaveTextContent('模型连续 5 轮无有效动作')
+    expect(items[1]).toHaveTextContent('b1:t2')
+    expect(items[1]).toHaveTextContent('环境侧')
+    expect(items[1]).toHaveTextContent('429')
+  })
+
+  it('逐题表新增「原因」列，展示 error 摘要', () => {
+    render(
+      <MemoryRouter>
+        <ResultView
+          report={failingReport}
+          run={{ ...run, status: 'finished' }}
+          provider={null}
+          benchmark={benchmark}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getAllByRole('columnheader', { name: '原因' })).toHaveLength(2)
+    // 逐题表与归因明细各出现一次
+    expect(screen.getAllByText('模型连续 5 轮无有效动作')).toHaveLength(2)
+    // 逐题表与归因明细的「原因」列各出现一次 error 摘要
+    expect(screen.getAllByText(/请登录platform进行实名认证/)).toHaveLength(2)
+    // 类别信号（429）出现在信号列表与明细表，与 error 原文无关
+    expect(screen.getAllByText(/HTTP 429/)).toHaveLength(2)
   })
 
   it('全部解出时不渲染归因区', () => {

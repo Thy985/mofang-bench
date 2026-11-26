@@ -8,6 +8,8 @@ export type ColorName =
   | 'red'
   | 'orange'
 export type ToolMode = 'both' | 'turn_only' | 'batch_only'
+export type SolverMode = 'off' | 'assist'
+export type SkillMode = 'none' | 'ortega' | 'lbl'
 
 export interface CubeState {
   cube: CubeKind
@@ -144,6 +146,9 @@ export interface AttributionSummary {
   model: number
   codes: Record<string, number>
   signals: Record<string, number>
+  // 计数类信息按整局汇总（跨 episode 求和），不混入 signals 文案
+  provider_errors_total?: number
+  protocol_errors_total?: number
   items: AttributionItem[]
 }
 
@@ -155,6 +160,8 @@ export interface AggregateReport {
   partial: boolean
   totals: AggregateTotals
   by_bin: Record<string, BinStats>
+  solver?: SolverMode
+  skill?: SkillMode
   attribution?: AttributionSummary
   episodes: Array<{
     task_id: string
@@ -180,6 +187,8 @@ export interface Run {
   tool_mode: ToolMode
   prompt_version: string
   require_plan?: boolean
+  solver?: SolverMode
+  skill?: SkillMode
   status: string
   totals: AggregateReport | null
   error: string | null
@@ -207,6 +216,8 @@ export interface Episode {
   failure_code: string | null
   error: string | null
   plan?: Plan | null
+  solver?: SolverMode
+  skill?: SkillMode
   started_at: string | null
   finished_at: string | null
 }
@@ -234,6 +245,8 @@ export interface Report {
   run_id: string
   provider_id: string
   benchmark_id: string
+  solver?: SolverMode
+  skill?: SkillMode
   status: string
   started_at: string | null
   finished_at: string | null
@@ -256,6 +269,10 @@ export interface RunCreate {
   task_keys?: string[] | null
   // 计划模式：要求 agent 先 submit_plan 提交目标与分阶段计划
   require_plan?: boolean
+  // 求解器辅助：off 不暴露 solve 工具；assist 暴露但只给建议、不自动执行
+  solver?: SolverMode
+  // 方法 pack：none 不注入；ortega 只对 2x2、lbl 只对 3x3；与 assist 互斥
+  skill?: SkillMode
   params: Record<string, unknown>
   budget: Partial<Budget>
 }
@@ -302,6 +319,16 @@ export type RunEvent =
     >
   | RunEventBase<'plan.updated', { plan: Plan; revisions: number }>
   | RunEventBase<'model.turn.started', { moves_used: number }>
+  | RunEventBase<
+      'model.provider_retry',
+      {
+        kind: string
+        attempt: number
+        max: number
+        delay: number
+        message: string
+      }
+    >
   | RunEventBase<
       'model.message',
       {
@@ -368,6 +395,12 @@ export interface CompareResult {
   content_hash: string
   tasks: number
   runs: string[]
+  solver_first?: SolverMode
+  solver_second?: SolverMode
+  same_solver?: boolean
+  skill_first?: SkillMode
+  skill_second?: SkillMode
+  same_skill?: boolean
   solve_rate_first: number
   solve_rate_second: number
   solve_rate_diff: number

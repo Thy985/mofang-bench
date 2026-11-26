@@ -22,12 +22,12 @@ export function Select({
       <select
         id={selectId}
         aria-invalid={error ? true : undefined}
-        className={`rounded-md bg-sunken px-2 py-2 text-sm transition-colors duration-fast focus-visible:outline-2 focus-visible:outline-accent ${error ? 'border border-danger' : 'border border-transparent'} ${className}`}
+        className={`h-[34px] min-w-0 rounded-[7px] border border-line bg-sunken px-2.5 text-[13px] text-text-strong transition-colors duration-fast hover:border-[#333a43] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/25 ${error ? 'border-danger' : ''} ${className}`}
         {...rest}
       >
         {children}
       </select>
-      {error && <p className="text-xs text-rose-300">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useBenchmark, useEpisode, useRun, useSteps } from '../api/queries'
 import type { Episode, Plan, Step } from '../api/types'
 import { PlayerBar } from '../components/PlayerBar'
@@ -17,6 +17,7 @@ import {
   formatTokens,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Stat } from '../ui/Stat'
 
@@ -29,7 +30,7 @@ export interface EpisodeViewProps {
 
 const chipCls = (active: boolean) =>
   `rounded px-2 py-1 text-xs ${
-    active ? 'bg-accent-dim text-white' : 'bg-surface text-text'
+    active ? 'bg-accent text-on-accent' : 'bg-surface text-text hover:text-text-strong'
   }`
 
 // 回放页的计划兜底：从 steps 里找最后一次 submit_plan 的参数。
@@ -59,15 +60,12 @@ export function EpisodeView({
   const step = playback.active >= 0 ? steps[playback.active] : null
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold">
-          题目 {episode.task_key}
-        </h1>
-        <StatusBadge status={episode.status} />
-        <Link className="text-sm text-text-dim" to={`/runs/${episode.run_id}`}>
-          返回 run
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="评测记录"
+        title={`题目 ${episode.task_key}`}
+        actions={<StatusBadge status={episode.status} />}
+        back={{ to: `/runs/${episode.run_id}`, label: '返回 run' }}
+      />
       <div className="grid gap-4 text-sm sm:grid-cols-3 lg:grid-cols-6">
         <div>
           <div className="text-xs text-text-dim">解出</div>

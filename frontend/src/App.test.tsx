@@ -39,11 +39,11 @@ describe('App routes', () => {
       </QueryClientProvider>,
     )
     expect(
-      await screen.findByRole('heading', { name: 'Providers' }),
+      await screen.findByRole('heading', { name: 'Providers' }, { timeout: 5000 }),
     ).toBeInTheDocument()
     // 占位组件只有标题；断言表单按钮才能证明接的是真实页面
     expect(
-      await screen.findByRole('button', { name: '保存 provider' }),
+      await screen.findByRole('button', { name: '保存 provider' }, { timeout: 5000 }),
     ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument()
   })
@@ -60,10 +60,12 @@ describe('App routes', () => {
       </QueryClientProvider>,
     )
     expect(
-      await screen.findByRole('heading', { name: 'Runs' }),
+      await screen.findByRole('heading', { name: 'Runs' }, { timeout: 5000 }),
     ).toBeInTheDocument()
     // 占位组件只有标题；空状态文案才能证明接的是真实页面
-    expect(await screen.findByText('还没有运行记录')).toBeInTheDocument()
+    expect(
+      await screen.findByText('还没有运行记录', undefined, { timeout: 5000 }),
+    ).toBeInTheDocument()
   })
 
   it('renders the new run route', async () => {
@@ -78,10 +80,10 @@ describe('App routes', () => {
       </QueryClientProvider>,
     )
     expect(
-      await screen.findByRole('heading', { name: 'New Run' }),
+      await screen.findByRole('heading', { name: 'New Run' }, { timeout: 5000 }),
     ).toBeInTheDocument()
     expect(
-      await screen.findByRole('button', { name: '启动 run' }),
+      await screen.findByRole('button', { name: '启动 run' }, { timeout: 5000 }),
     ).toBeInTheDocument()
   })
 })

@@ -21,11 +21,16 @@ import type {
   CubeKind,
   Provider,
   RunCreate,
+  SkillMode,
+  SolverMode,
   ToolMode,
 } from '../api/types'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { ChoiceChips } from '../ui/ChoiceChips'
 import { Input } from '../ui/Input'
+import { ModeCards } from '../ui/ModeCards'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
 import { useToast } from '../ui/Toast'
@@ -36,16 +41,26 @@ const DEFAULTS: Record<CubeKind, Budget> = {
     max_moves: 30,
     max_tool_calls: 50,
     max_tokens: 300000,
-    max_seconds: 300,
-    turn_timeout: 120,
+    max_seconds: 1800,
+    turn_timeout: 600,
   },
   '3x3': {
     max_moves: 100,
     max_tool_calls: 150,
     max_tokens: 1000000,
-    max_seconds: 900,
-    turn_timeout: 120,
+    max_seconds: 2400,
+    turn_timeout: 900,
   },
+}
+
+// skill 模式只抬高 max_moves；与后端 factory.SKILL_MAX_MOVES 保持一致。
+const SKILL_MAX_MOVES: Record<Exclude<SkillMode, 'none'>, number> = {
+  ortega: 36,
+  lbl: 200,
+}
+const SKILL_CUBE: Record<Exclude<SkillMode, 'none'>, CubeKind> = {
+  ortega: '2x2',
+  lbl: '3x3',
 }
 
 type BudgetKey =
@@ -131,6 +146,10 @@ export function NewRunView({
   const [toolMode, setToolMode] = useState<ToolMode>('both')
   // 计划模式默认开启：prompt_version 记为 v2-plan，可与关闭的 run 消融对比
   const [requirePlan, setRequirePlan] = useState(true)
+  // 求解器辅助默认关闭；assist 才暴露 solve 工具（只给建议，执行仍由模型负责）
+  const [solverMode, setSolverMode] = useState<SolverMode>('off')
+  // 方法 pack 默认不注入；首版与 assist 互斥
+  const [skillMode, setSkillMode] = useState<SkillMode>('none')
   const [budget, setBudget] = useState<Record<BudgetKey, string>>(
     toBudgetForm(DEFAULTS['2x2']),
   )
@@ -150,12 +169,46 @@ export function NewRunView({
   const selectedCube = selected?.cube
 
   useEffect(() => {
-    if (selected) setBudget(toBudgetForm(DEFAULTS[selected.cube]))
+    if (!selected) return
+    const next = toBudgetForm(DEFAULTS[selected.cube])
+    // 同阶数切换题集时保持 skill 模式的 max_moves，不回落成无 skill 的默认值。
+    if (skillMode !== 'none' && SKILL_CUBE[skillMode] === selected.cube) {
+      next.max_moves = String(SKILL_MAX_MOVES[skillMode])
+    }
+    setBudget(next)
   }, [selectedId, selectedCube])
 
   useEffect(() => {
     setSelectedTasks(null)
   }, [selectedId])
+
+  // 阶数切换后，已选的 pack 若不适用就回落到 none（不静默提交错配组合）。
+  useEffect(() => {
+    if (
+      selectedCube &&
+      skillMode !== 'none' &&
+      SKILL_CUBE[skillMode] !== selectedCube
+    ) {
+      setSkillMode('none')
+    }
+  }, [selectedCube, skillMode])
+
+  function changeSkill(value: SkillMode) {
+    setSkillMode(value)
+    // 互斥：选了 pack 就关掉 assist；预算按模式默认抬高（用户仍可手动改回）。
+    if (value !== 'none') {
+      setSolverMode('off')
+      setBudget((current) => ({
+        ...current,
+        max_moves: String(SKILL_MAX_MOVES[value]),
+      }))
+    } else if (selected) {
+      setBudget((current) => ({
+        ...current,
+        max_moves: String(DEFAULTS[selected.cube].max_moves),
+      }))
+    }
+  }
 
   function clearError(key: string) {
     setFieldErrors((current) => {
@@ -189,10 +242,6 @@ export function NewRunView({
       after.delete(id)
       return after
     })
-  }
-
-  function isTaskChecked(id: string): boolean {
-    return selectedTasks === null || selectedTasks.has(id)
   }
 
   function updateBudget(key: BudgetKey, value: string) {
@@ -283,6 +332,8 @@ export function NewRunView({
         tool_mode: toolMode,
         task_keys: allSelected ? null : selectedKeys,
         require_plan: requirePlan,
+        solver: solverMode,
+        skill: skillMode,
         params: parsedParams,
         budget: parsedBudget,
       })
@@ -295,271 +346,453 @@ export function NewRunView({
 
   const selectedCount =
     selectedTasks === null ? tasks.length : selectedTasks.size
+  const selectedProviderNames = selectedProviders
+    .map((id) => providers.find((p) => p.id === id)?.name)
+    .filter((name): name is string => Boolean(name))
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">New Run</h1>
-      {error && <Alert tone="danger">{error}</Alert>}
+    <div>
+      <PageHeader
+        eyebrow="评测记录"
+        title="New Run"
+        subtitle="选择模型与题集，启动一次评测"
+      />
+      {error && (
+        <div className="mb-5">
+          <Alert tone="danger">{error}</Alert>
+        </div>
+      )}
       {!error && providers.length === 0 && (
-        <p className="text-sm text-amber-300">
-          还没有 provider，先到 <Link to="/providers">Providers</Link> 配置。
+        <p className="mb-5 text-sm text-warning">
+          还没有 provider，先到 <Link className="text-accent" to="/providers">Providers</Link> 配置。
         </p>
       )}
       {!error && benchmarks.length === 0 && (
-        <p className="text-sm text-amber-300">
-          还没有基准集，先到 <Link to="/benchmarks">Benchmarks</Link> 生成。
+        <p className="mb-5 text-sm text-warning">
+          还没有基准集，先到 <Link className="text-accent" to="/benchmarks">Benchmarks</Link> 生成。
         </p>
       )}
       {/* noValidate：小数秒/超时与显式 0 都交给提交时的中文校验，不要浏览器原生气泡 */}
-      <form
-        noValidate
-        onSubmit={handleSubmit}
-        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
-      >
-        <div className="grid gap-2 md:col-span-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm">
-              模型（可多选，每个模型各建一个 run 并行执行）
-            </span>
-            <span className="flex items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  clearError('providerIds')
-                  setSelectedProviders(providers.map((item) => item.id))
-                }}
-              >
-                全选
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  clearError('providerIds')
-                  setSelectedProviders([])
-                }}
-              >
-                清空
-              </Button>
-            </span>
-          </div>
-          <div
-            id="newrun-providers"
-            data-testid="newrun-providers"
-            tabIndex={-1}
-            className="grid gap-1 rounded border border-line bg-surface-2 p-2 sm:grid-cols-2"
-          >
-            {providers.map((provider) => (
-              <label
-                key={provider.id}
-                className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-surface"
-              >
-                <input
-                  type="checkbox"
-                  checked={selectedProviders.includes(provider.id)}
-                  onChange={(event) =>
-                    toggleProvider(provider.id, event.target.checked)
-                  }
-                />
-                <span>
-                  {provider.name}
-                  <span className="text-text-dim">（{provider.model}）</span>
+      <form noValidate onSubmit={handleSubmit} className="new-grid">
+        <div className="min-w-0">
+          <section className="group">
+            <header>
+              <span className="idx">01</span>
+              <h2>模型与题集</h2>
+              <span className="note">每个模型各建一个 run 并行执行</span>
+            </header>
+
+            <div className="field">
+              <div className="flex items-center justify-between gap-3">
+                <span className="lab mb-0">模型</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-xs text-text-faint">
+                    已选 {selectedProviders.length}/{providers.length}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      clearError('providerIds')
+                      setSelectedProviders(providers.map((item) => item.id))
+                    }}
+                  >
+                    全选
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      clearError('providerIds')
+                      setSelectedProviders([])
+                    }}
+                  >
+                    清空
+                  </Button>
                 </span>
-              </label>
-            ))}
-          </div>
-          {fieldErrors.providerIds && (
-            <p role="alert" className="text-xs text-rose-300">
-              {fieldErrors.providerIds}
-            </p>
-          )}
-        </div>
-        <label className="grid gap-1 text-sm">
-          <span>Benchmark</span>
-          <Select
-            value={activeBenchmarkId}
-            onChange={(event) => onBenchmarkChange(event.target.value)}
-          >
-            {benchmarks.map((benchmark) => (
-              <option key={benchmark.id} value={benchmark.id}>
-                {benchmark.name} ({benchmark.cube}, {benchmark.task_count} 题)
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="grid gap-1 text-sm">
-          <span>工具模式</span>
-          <Select
-            value={toolMode}
-            onChange={(event) =>
-              setToolMode(event.target.value as ToolMode)
-            }
-          >
-            <option value="both">both（turn + apply_moves）</option>
-            <option value="turn_only">turn only</option>
-            <option value="batch_only">apply_moves only</option>
-          </Select>
-        </label>
-        <label className="flex items-center gap-2 self-end pb-2 text-sm">
-          <input
-            type="checkbox"
-            data-testid="newrun-require-plan"
-            checked={requirePlan}
-            onChange={(event) => setRequirePlan(event.target.checked)}
-          />
-          <span>
-            计划模式
-            <span className="text-text-dim">
-              （先提交 goal 与分阶段计划；关掉可与开启的 run 做消融对比）
-            </span>
-          </span>
-        </label>
-        <div className="grid gap-2 md:col-span-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm">
-              选题子集（默认全选；只选一题可让多个模型同题并行对比）
-              {benchmarkLoading && (
-                <span className="ml-2 text-xs text-text-dim">题目加载中…</span>
+              </div>
+              <ChoiceChips
+                id="newrun-providers"
+                data-testid="newrun-providers"
+                tabIndex={-1}
+                options={providers.map((provider) => ({
+                  value: provider.id,
+                  title: provider.name,
+                  hint: `（${provider.model}）`,
+                }))}
+                selected={new Set(selectedProviders)}
+                onToggle={toggleProvider}
+              />
+              {fieldErrors.providerIds && (
+                <p role="alert" className="mt-1 text-xs text-danger">
+                  {fieldErrors.providerIds}
+                </p>
               )}
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="text-xs text-text-dim">
-                已选 {selectedCount}/{tasks.length}
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  clearError('tasks')
-                  setSelectedTasks(null)
-                }}
+            </div>
+
+            <div className="field">
+              <label htmlFor="newrun-benchmark" className="lab">
+                Benchmark
+              </label>
+              <Select
+                id="newrun-benchmark"
+                value={activeBenchmarkId}
+                onChange={(event) => onBenchmarkChange(event.target.value)}
               >
-                全选
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  clearError('tasks')
-                  setSelectedTasks(new Set())
-                }}
-              >
-                清空
-              </Button>
-            </span>
-          </div>
-          {tasks.length > 0 && (
+                {benchmarks.map((benchmark) => (
+                  <option key={benchmark.id} value={benchmark.id}>
+                    {benchmark.name} ({benchmark.cube}, {benchmark.task_count} 题)
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="field">
+              <div className="flex items-center justify-between gap-3">
+                <span className="lab mb-0">
+                  选题子集
+                  {benchmarkLoading && (
+                    <span className="ml-2 text-text-faint">题目加载中…</span>
+                  )}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-xs text-text-faint">
+                    已选 {selectedCount}/{tasks.length}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      clearError('tasks')
+                      setSelectedTasks(null)
+                    }}
+                  >
+                    全选
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      clearError('tasks')
+                      setSelectedTasks(new Set())
+                    }}
+                  >
+                    清空
+                  </Button>
+                </span>
+              </div>
+              {tasks.length > 0 && (
+                <ChoiceChips
+                  id="newrun-tasks"
+                  data-testid="newrun-tasks"
+                  tabIndex={-1}
+                  className="max-h-24 overflow-auto pr-1"
+                  options={tasks.map((task) => ({
+                    value: task.id,
+                    title: `#${task.id}`,
+                    hint: `· bin ${task.bin} · 参照 ${task.reference_length}`,
+                  }))}
+                  selected={
+                    selectedTasks ?? new Set(tasks.map((task) => task.id))
+                  }
+                  onToggle={toggleTask}
+                />
+              )}
+              {fieldErrors.tasks && (
+                <p role="alert" className="mt-1 text-xs text-danger">
+                  {fieldErrors.tasks}
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section className="group">
+            <header>
+              <span className="idx">02</span>
+              <h2>策略</h2>
+              <span className="note">工具与提示词模式</span>
+            </header>
+
+            <div className="field">
+              <span className="lab">工具模式</span>
+              <ModeCards
+                aria-label="工具模式"
+                value={toolMode}
+                onChange={(value) => setToolMode(value as ToolMode)}
+                options={[
+                  {
+                    value: 'both',
+                    title: 'both',
+                    hint: 'turn + apply_moves',
+                    badge: '默认',
+                  },
+                  {
+                    value: 'turn_only',
+                    title: 'turn only',
+                    hint: '只发 turn（单步）',
+                    badge: '单步',
+                  },
+                  {
+                    value: 'batch_only',
+                    title: 'apply_moves only',
+                    hint: '只发 apply_moves（批量）',
+                    badge: '批量',
+                  },
+                ]}
+              />
+            </div>
+
+            <div className="field">
+              <span className="lab">求解器辅助</span>
+              <ModeCards
+                aria-label="求解器辅助"
+                value={solverMode}
+                onChange={(value) => setSolverMode(value as SolverMode)}
+                options={[
+                  {
+                    value: 'off',
+                    title: 'off',
+                    hint: '不提供 solve 工具',
+                    badge: '默认',
+                  },
+                  {
+                    value: 'assist',
+                    title: 'assist',
+                    hint: '提供 solve，仅建议、不自动执行',
+                    badge: '建议',
+                    disabled: skillMode !== 'none',
+                  },
+                ]}
+              />
+            </div>
+
+            <div className="field">
+              <span className="lab">方法 pack（skill）</span>
+              <ModeCards
+                aria-label="方法 pack（skill）"
+                value={skillMode}
+                onChange={(value) => changeSkill(value as SkillMode)}
+                options={[
+                  {
+                    value: 'none',
+                    title: 'none',
+                    hint: '不注入方法',
+                    badge: '默认',
+                  },
+                  {
+                    value: 'ortega',
+                    title: 'ortega',
+                    hint: '2x2 · Ortega 方法',
+                    badge: '2x2',
+                    disabled: selectedCube !== '2x2' || solverMode === 'assist',
+                  },
+                  {
+                    value: 'lbl',
+                    title: 'lbl',
+                    hint: '3x3 · 入门分层法',
+                    badge: '3x3',
+                    disabled: selectedCube !== '3x3' || solverMode === 'assist',
+                  },
+                ]}
+              />
+              {solverMode === 'assist' && (
+                <span className="field-hint text-warning">
+                  assist 与 skill 首版互斥：先关闭 assist 才能选 pack。
+                </span>
+              )}
+            </div>
+
+            <div className="field" data-testid="newrun-require-plan">
+              <span className="lab">计划模式</span>
+              <ModeCards
+                aria-label="计划模式"
+                value={requirePlan ? 'on' : 'off'}
+                onChange={(value) => setRequirePlan(value === 'on')}
+                options={[
+                  {
+                    value: 'on',
+                    title: '开启',
+                    hint: '先提交 goal 与分阶段计划',
+                    badge: 'v2-plan',
+                  },
+                  {
+                    value: 'off',
+                    title: '关闭',
+                    hint: '关掉可与开启的 run 做消融对比',
+                    badge: 'v1',
+                  },
+                ]}
+              />
+            </div>
+
             <div
-              id="newrun-tasks"
-              data-testid="newrun-tasks"
-              tabIndex={-1}
-              className="flex flex-wrap gap-1 rounded border border-line bg-surface-2 p-2"
+              data-testid="newrun-mode-summary"
+              className="flex flex-wrap items-center gap-1.5"
             >
-              {tasks.map((task) => (
-                <label
-                  key={task.id}
-                  className="flex items-center gap-1.5 rounded border border-line bg-surface px-2 py-0.5 text-xs hover:bg-surface-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={isTaskChecked(task.id)}
+              <span className="text-xs text-text-faint">模式</span>
+              <span className="chip h-[22px] cursor-default text-[10.5px]">
+                工具 {toolMode}
+              </span>
+              <span className="chip h-[22px] cursor-default text-[10.5px]">
+                求解器 {solverMode}
+              </span>
+              <span className="chip h-[22px] cursor-default text-[10.5px]">
+                pack {skillMode}
+              </span>
+              <span
+                className={`chip h-[22px] cursor-default text-[10.5px] ${
+                  requirePlan ? 'text-accent' : ''
+                }`}
+              >
+                计划 {requirePlan ? 'ON' : 'OFF'}
+              </span>
+            </div>
+          </section>
+
+          <section className="group">
+            <header>
+              <span className="idx">03</span>
+              <h2>预算与参数</h2>
+              <span className="note">未配置价格，仅统计 tokens</span>
+            </header>
+
+            <div className="budget-row">
+              {(
+                [
+                  ['max_moves', '最大步数', '步'],
+                  ['max_seconds', '最长秒数', '秒'],
+                  ['max_tool_calls', '工具调用', '次'],
+                  ['max_tokens', '最大 tokens', 'tokens'],
+                  ['turn_timeout', '单轮超时', '秒'],
+                ] as const
+              ).map(([key, label, unit]) => (
+                <div key={key} className="min-w-0">
+                  <label htmlFor={`newrun-budget-${key}`} className="lab">
+                    {label}
+                  </label>
+                  <Input
+                    id={`newrun-budget-${key}`}
+                    aria-label={key}
+                    type="number"
+                    min={1}
+                    step={FLOAT_KEYS.has(key) ? 'any' : undefined}
+                    value={budget[key]}
+                    error={fieldErrors[key]}
                     onChange={(event) =>
-                      toggleTask(task.id, event.target.checked)
+                      updateBudget(key, event.target.value)
                     }
                   />
-                  <span>
-                    #{task.id}
-                    <span className="text-text-dim">
-                      {' '}
-                      · bin {task.bin} · 参照 {task.reference_length} 步
-                    </span>
-                  </span>
-                </label>
+                  <span className="u font-mono">{unit}</span>
+                </div>
               ))}
             </div>
-          )}
-          {fieldErrors.tasks && (
-            <p role="alert" className="text-xs text-rose-300">
-              {fieldErrors.tasks}
-            </p>
-          )}
-        </div>
-        <div className="grid gap-2 md:col-span-2">
-          <p className="text-sm text-text-dim">
-            预算上限（未配置价格，仅统计 tokens）
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            {(
-              [
-                ['max_moves', '最大步数'],
-                ['max_seconds', '最长秒数'],
-                ['max_tool_calls', '工具调用'],
-                ['max_tokens', '最大 tokens'],
-                ['turn_timeout', '单轮超时'],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="grid gap-1 text-xs">
-                <span>{key}</span>
+
+            <div className="field-row mt-3.5">
+              <div>
+                <label htmlFor="newrun-temperature" className="lab">
+                  temperature
+                </label>
                 <Input
-                  id={`newrun-budget-${key}`}
-                  aria-label={key}
+                  id="newrun-temperature"
+                  aria-label="params_temperature"
+                  value={temperature}
+                  error={fieldErrors.temperature}
+                  onChange={(event) => {
+                    setTemperature(event.target.value)
+                    clearError('temperature')
+                  }}
+                />
+                <span className="field-hint">0 到 2，留空不覆盖</span>
+              </div>
+              <div>
+                <label htmlFor="newrun-params-max-tokens" className="lab">
+                  max_tokens
+                </label>
+                <Input
+                  id="newrun-params-max-tokens"
+                  aria-label="params_max_tokens"
                   type="number"
                   min={1}
-                  step={FLOAT_KEYS.has(key) ? 'any' : undefined}
-                  value={budget[key]}
-                  error={fieldErrors[key]}
-                  onChange={(event) =>
-                    updateBudget(key, event.target.value)
-                  }
+                  value={maxTokens}
+                  error={fieldErrors.params_max_tokens}
+                  onChange={(event) => {
+                    setMaxTokens(event.target.value)
+                    clearError('params_max_tokens')
+                  }}
                 />
-                <span className="text-text-dim">{label}</span>
-              </label>
-            ))}
-          </div>
+                <span className="field-hint">留空不覆盖</span>
+              </div>
+            </div>
+          </section>
         </div>
-        <div className="grid gap-2 md:col-span-2">
-          <p className="text-sm text-text-dim">
-            可选参数覆盖（留空沿用 provider 默认）
+
+        <aside className="summary">
+          <h3>本次将启动</h3>
+          <div className="sum-row">
+            <span className="k">模型</span>
+            <span className="v" title={selectedProviderNames.join(', ')}>
+              {selectedProviders.length === 0
+                ? '未选择'
+                : selectedProviderNames.length > 1
+                  ? `${selectedProviderNames[0]} 等 ${selectedProviderNames.length} 个`
+                  : selectedProviderNames[0]}
+            </span>
+          </div>
+          <div className="sum-row">
+            <span className="k">题集</span>
+            <span className="v">
+              {selected ? `${selected.name} · ${selected.cube}` : '—'}
+            </span>
+          </div>
+          <div className="sum-row">
+            <span className="k">题目</span>
+            <span className="v font-mono">
+              {selectedCount}/{tasks.length || '—'}
+            </span>
+          </div>
+          <div className="sum-row">
+            <span className="k">工具</span>
+            <span className="v font-mono">{toolMode}</span>
+          </div>
+          <div className="sum-row">
+            <span className="k">求解器</span>
+            <span className="v font-mono">{solverMode}</span>
+          </div>
+          <div className="sum-row">
+            <span className="k">方法包</span>
+            <span className="v font-mono">{skillMode}</span>
+          </div>
+          <div className="sum-row">
+            <span className="k">计划</span>
+            <span className={`v font-mono ${requirePlan ? 'text-accent' : ''}`}>
+              {requirePlan ? 'ON' : 'OFF'}
+            </span>
+          </div>
+          <div className="sum-row border-b-0">
+            <span className="k">预算</span>
+            <span className="v font-mono">
+              {budget.max_moves} 步 · {budget.max_seconds}s
+            </span>
+          </div>
+
+          <div className="mt-4">
+            <Button
+              variant="primary"
+              type="submit"
+              loading={submitting}
+              className="w-full"
+            >
+              启动 run
+            </Button>
+          </div>
+          <p className="mt-2 text-[11.5px] text-text-faint">
+            将为所选的 {selectedProviders.length || 0} 个模型各创建一个 run。
           </p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <label className="grid gap-1 text-xs">
-              <span>temperature</span>
-              <Input
-                id="newrun-temperature"
-                aria-label="params_temperature"
-                value={temperature}
-                error={fieldErrors.temperature}
-                onChange={(event) => {
-                  setTemperature(event.target.value)
-                  clearError('temperature')
-                }}
-              />
-              <span className="text-text-dim">0 到 2，留空不覆盖</span>
-            </label>
-            <label className="grid gap-1 text-xs">
-              <span>max_tokens</span>
-              <Input
-                id="newrun-params-max-tokens"
-                aria-label="params_max_tokens"
-                type="number"
-                min={1}
-                value={maxTokens}
-                error={fieldErrors.params_max_tokens}
-                onChange={(event) => {
-                  setMaxTokens(event.target.value)
-                  clearError('params_max_tokens')
-                }}
-              />
-              <span className="text-text-dim">留空不覆盖</span>
-            </label>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 md:col-span-2">
-          <Button variant="primary" type="submit" loading={submitting}>
-            启动 run
-          </Button>
-        </div>
+        </aside>
       </form>
     </div>
   )

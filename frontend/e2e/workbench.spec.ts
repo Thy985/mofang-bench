@@ -27,7 +27,8 @@ test('provider → benchmark → live run → result → replay', async ({
   await page.getByLabel('每档题数').fill('1')
   await page.getByLabel('seed').fill('3')
   await page.getByRole('button', { name: '生成基准集' }).click()
-  await expect(page).toHaveURL(/\/benchmarks\/e2e-2x2-3$/)
+  // 首次生成含 solver 建表（冷启动实测 ~4.6s），5s 阈值会临界 flake；放宽到 15s。
+  await expect(page).toHaveURL(/\/benchmarks\/e2e-2x2-3$/, { timeout: 15_000 })
   await expect(page.getByTestId('benchmark-task-row')).toHaveCount(1)
 
   await page

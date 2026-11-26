@@ -7,6 +7,7 @@ import type {
   Run,
 } from '../api/types'
 import {
+  errorSummary,
   formatPercent,
   formatTokens,
   statusLabel,
@@ -17,13 +18,16 @@ import { Card } from '../ui/Card'
 import { Skeleton } from '../ui/Skeleton'
 import { Table, Td, Th } from '../ui/Table'
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <Card className="p-3">
-      <div className="text-xs text-text-dim">{label}</div>
-      <div className="mt-1 text-lg font-medium">{value}</div>
-    </Card>
-  )
+const SIDE_LABELS: Record<string, string> = {
+  env: '环境侧',
+  model: '模型侧',
+  user: '用户',
+}
+
+const SIDE_STYLES: Record<string, string> = {
+  env: 'border-amber-400/40 text-amber-300',
+  model: 'border-rose-400/40 text-rose-300',
+  user: 'border-line text-text-dim',
 }
 
 export function ResultView({
@@ -63,6 +67,9 @@ export function ResultView({
       )
     }
   }
+  const episodeByTask = new Map(
+    report.episodes.map((episode) => [episode.task_key, episode]),
+  )
   return (
     <section data-testid="run-result" className="space-y-4">
       {error && <Alert tone="danger">{error}</Alert>}
@@ -74,26 +81,45 @@ export function ResultView({
           {benchmark?.name ?? run.benchmark_id}
         </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-4">
-        <StatCard
-          label="解出"
-          value={`${report.totals.solved} / ${report.totals.tasks}`}
-        />
-        <StatCard
-          label="解出率"
-          value={formatPercent(report.totals.solve_rate)}
-        />
-        <StatCard
-          label="CI95"
-          value={`${formatPercent(report.totals.ci95[0])} – ${formatPercent(
-            report.totals.ci95[1],
-          )}`}
-        />
-        <StatCard
-          label="部分结果"
-          value={report.partial ? '是（未跑全）' : '否'}
-        />
-      </div>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-eyebrow text-text-dim">
+              解出率
+            </div>
+            <div className="mt-1 text-5xl font-bold tracking-tight text-accent">
+              {formatPercent(report.totals.solve_rate)}
+            </div>
+          </div>
+          <dl className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-text-dim">已解出</dt>
+              <dd className="mt-0.5 text-lg font-medium">
+                {report.totals.solved} / {report.totals.tasks}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-text-dim">CI95</dt>
+              <dd className="mt-0.5 text-lg font-medium">
+                {formatPercent(report.totals.ci95[0])} –{' '}
+                {formatPercent(report.totals.ci95[1])}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-text-dim">部分结果</dt>
+              <dd className="mt-0.5 text-lg font-medium">
+                {report.partial ? '是（未跑全）' : '否'}
+              </dd>
+            </div>
+          </dl>
+        </div>
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-line">
+          <div
+            className="h-full rounded-full bg-accent"
+            style={{ width: `${report.totals.solve_rate * 100}%` }}
+          />
+        </div>
+      </Card>
 
       <div>
         <h3 className="mb-2 text-sm font-medium text-text">分箱</h3>
@@ -103,7 +129,7 @@ export function ResultView({
       <div>
         <h3 className="mb-2 text-sm font-medium text-text">逐题</h3>
         <div className="overflow-auto">
-          <Table>
+          <Table className="min-w-[900px] [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
             <thead>
               <tr>
                 <Th>task</Th>
@@ -115,6 +141,7 @@ export function ResultView({
                 <Th>tokens</Th>
                 <Th>耗时</Th>
                 <Th>失败码</Th>
+                <Th>原因</Th>
                 <Th />
               </tr>
             </thead>
@@ -142,6 +169,18 @@ export function ResultView({
                       : `${(episode.latency_ms / 1000).toFixed(1)}s`}
                   </Td>
                   <Td>{episode.failure_code ?? '—'}</Td>
+                  <Td className="max-w-[260px]">
+                    {episode.error ? (
+                      <span
+                        className="block truncate text-text-dim"
+                        title={episode.error}
+                      >
+                        {errorSummary(episode.error)}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
                   <Td>
                     <Link
                       data-testid="episode-replay-link"
@@ -187,6 +226,22 @@ export function ResultView({
               </span>
             )}
           </p>
+          {(() => {
+            const stats: string[] = []
+            if (report.attribution.provider_errors_total) {
+              stats.push(
+                `provider 退避/错误 共 ${report.attribution.provider_errors_total} 次`,
+              )
+            }
+            if (report.attribution.protocol_errors_total) {
+              stats.push(
+                `协议错误 共 ${report.attribution.protocol_errors_total} 次`,
+              )
+            }
+            return stats.length > 0 ? (
+              <p className="text-text-dim">{stats.join(' · ')}</p>
+            ) : null
+          })()}
           {Object.keys(report.attribution.signals).length > 0 && (
             <ul className="list-disc space-y-0.5 pl-5 text-text-dim">
               {Object.entries(report.attribution.signals).map(
@@ -199,6 +254,54 @@ export function ResultView({
               )}
             </ul>
           )}
+          <div className="overflow-auto">
+            <Table className="min-w-[680px] [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+              <thead>
+                <tr>
+                  <Th>task</Th>
+                  <Th>侧别</Th>
+                  <Th>失败码</Th>
+                  <Th>信号</Th>
+                  <Th>原因</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.attribution.items.map((item, index) => (
+                  <tr
+                    key={`${item.task_id}-${index}`}
+                    data-testid="attribution-item"
+                  >
+                    <Td>{item.task_id}</Td>
+                    <Td>
+                      <span
+                        className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-semibold ${SIDE_STYLES[item.side] ?? SIDE_STYLES.user}`}
+                      >
+                        {SIDE_LABELS[item.side] ?? item.side}
+                      </span>
+                    </Td>
+                    <Td>{item.code}</Td>
+                    <Td className="text-text-dim">
+                      {item.signals.length > 0 ? item.signals.join('；') : '—'}
+                    </Td>
+                    <Td className="max-w-[260px]">
+                      {episodeByTask.get(item.task_id)?.error ? (
+                        <span
+                          className="block truncate"
+                          title={episodeByTask.get(item.task_id)?.error ?? ''}
+                        >
+                          {errorSummary(
+                            episodeByTask.get(item.task_id)?.error,
+                          )}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
           <p className="text-xs text-text-dim">
             harness 工具链本身的正确性由题集详情页的「Harness
             自检」独立验证；两侧的详细定义见 README「失败归因」。

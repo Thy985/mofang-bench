@@ -15,6 +15,7 @@ import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Input } from '../ui/Input'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Textarea } from '../ui/Textarea'
 import { useToast } from '../ui/Toast'
@@ -29,7 +30,7 @@ const initialForm = {
   api_key: '',
   api_key_ref: '',
   temperature: '0',
-  max_tokens: '16384',
+  max_tokens: '32000',
   extra: '{}',
 }
 
@@ -44,7 +45,7 @@ function formFromProvider(provider: Provider): FormValues {
     api_key: '',
     api_key_ref: provider.api_key_ref,
     temperature: String(provider.params.temperature ?? 0),
-    max_tokens: String(provider.params.max_tokens ?? 16384),
+    max_tokens: String(provider.params.max_tokens ?? 32000),
     extra: JSON.stringify(provider.params.extra ?? {}, null, 2),
   }
 }
@@ -423,11 +424,11 @@ export function ProvidersView({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Providers</h1>
+      <PageHeader eyebrow="模型配置" title="Providers" />
       {error && <Alert tone="danger">{error}</Alert>}
       <form
         onSubmit={handleSubmit}
-        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
+        className="clip-slant-r grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
         <FormFields
           prefix="provider-"

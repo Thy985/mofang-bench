@@ -32,16 +32,16 @@ import type { LiveState } from '../hooks/liveReducer'
 import { describeError } from '../lib/errors'
 import {
   formatDuration,
+  formatPercent,
   formatTokens,
   shortId,
 } from '../lib/format'
 import { Alert } from '../ui/Alert'
 import { AnimatedNumber } from '../ui/AnimatedNumber'
 import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
-import { Stat } from '../ui/Stat'
 import { useToast } from '../ui/Toast'
 import { toastError } from '../ui/toastError'
 
@@ -61,6 +61,7 @@ export function RunLivePanel({
   provider,
   onCancel,
   cancelling,
+  showCancel = true,
 }: {
   live: LiveState
   run: Run
@@ -68,6 +69,7 @@ export function RunLivePanel({
   provider: Provider | null
   onCancel: () => void
   cancelling: boolean
+  showCancel?: boolean
 }) {
   const episode = live.currentEpisode
   const elapsed = useElapsed(run.started_at)
@@ -78,90 +80,135 @@ export function RunLivePanel({
   if (live.thinkingText) thinkingSeen.current = true
   const tokens =
     live.usage.prompt_tokens + live.usage.completion_tokens
+  const totalTasks = benchmark?.tasks.length ?? null
   const completed = live.episodes.filter(
     (item) => item.status !== 'running',
   ).length
+  const solved = live.episodes.filter((item) => item.solved).length
+  const rate = totalTasks ? solved / totalTasks : null
   return (
-    <Card className="space-y-4 self-start p-4 text-sm">
-      <div className="grid grid-cols-2 gap-2">
-        <Stat
-          label="provider"
-          value={
-            provider
+    <aside className="inspector">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[11px] text-text-faint">解出率</div>
+          <div className="font-mono text-[28px] leading-tight font-semibold tracking-tight">
+            {formatPercent(rate)}
+          </div>
+        </div>
+        <StatusBadge status={episode?.status ?? run.status} />
+      </div>
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-line">
+        <div
+          className="h-full rounded-full bg-accent"
+          style={{ width: rate == null ? '0%' : `${rate * 100}%` }}
+        />
+      </div>
+
+      <dl className="insp-kv mt-3">
+        <div>
+          <dt>provider</dt>
+          <dd>
+            {provider
               ? `${provider.name} / ${provider.model}`
-              : run.provider_id
-          }
-        />
-        <Stat label="题集" value={benchmark?.name ?? run.benchmark_id} />
-        <Stat
-          label="进度"
-          value={
-            <>
-              <AnimatedNumber value={completed} />
-              {`/${benchmark?.tasks.length ?? '?'}`}
-            </>
-          }
-        />
-        <Stat label="当前题" value={episode?.task_key ?? '—'} />
-        <Stat
-          data-testid="stat-moves"
-          label="步数"
-          value={
-            episode ? (
+              : run.provider_id}
+          </dd>
+        </div>
+        <div>
+          <dt>题集</dt>
+          <dd>{benchmark?.name ?? run.benchmark_id}</dd>
+        </div>
+        <div>
+          <dt>进度</dt>
+          <dd>
+            <AnimatedNumber value={completed} />
+            {`/${totalTasks ?? '?'}`}
+          </dd>
+        </div>
+        <div>
+          <dt>当前题</dt>
+          <dd>{episode?.task_key ?? '—'}</dd>
+        </div>
+        <div data-testid="stat-moves">
+          <dt>步数</dt>
+          <dd>
+            {episode ? (
               <>
                 <AnimatedNumber value={episode.moves_used} />
                 {`/${run.budget.max_moves}`}
               </>
             ) : (
               '—'
-            )
-          }
-        />
-        <Stat
-          label="参照长度"
-          value={String(episode?.reference_length ?? '—')}
-        />
-        <Stat label="计时" value={formatDuration(elapsed)} />
-        <Stat
-          label="tokens"
-          value={<AnimatedNumber value={tokens} format={formatTokens} />}
-        />
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>参照长度</dt>
+          <dd>{String(episode?.reference_length ?? '—')}</dd>
+        </div>
+        <div>
+          <dt>计时</dt>
+          <dd>{formatDuration(elapsed)}</dd>
+        </div>
+        <div>
+          <dt>tokens</dt>
+          <dd>
+            <AnimatedNumber value={tokens} format={formatTokens} />
+          </dd>
+        </div>
+      </dl>
+
+      <div className="sect mt-2">
+        <PhaseStepper phase={derivePhase(live)} />
       </div>
-      <PhaseStepper phase={derivePhase(live)} />
-      <div className="flex items-center gap-2">
-        <StatusBadge status={episode?.status ?? run.status} />
-        <span className="text-xs text-text-dim">成本：未配置价格</span>
-      </div>
+
+      {live.plan && (
+        <div className="sect">
+          <PlanPanel plan={live.plan} />
+        </div>
+      )}
+
       {live.thinking && !live.thinkingText && !thinkingSeen.current && (
-        <p data-testid="thinking" className="text-sky-300">
+        <p data-testid="thinking" className="sect text-xs text-info">
           思考中…
         </p>
       )}
-      <PlanPanel plan={live.plan} />
       {thinkingSeen.current && <ThinkingPanel text={live.thinkingText} />}
+
       {live.firstInvalidCall && (
-        <p className="text-amber-300">
+        <p className="sect text-xs text-warning">
           首次非法调用：{live.firstInvalidCall.tool} ·{' '}
           {live.firstInvalidCall.message}
         </p>
       )}
-      {live.error && <p className="text-rose-300">{live.error}</p>}
-      <ProgressChart
-        points={live.progress}
-        maxMoves={run.budget.max_moves}
-      />
-      <ToolLog logs={live.logs} />
-      {(run.status === 'queued' || run.status === 'running') && (
-        <Button
-          variant="danger"
-          type="button"
-          onClick={onCancel}
-          disabled={cancelling}
-        >
-          取消 run
-        </Button>
-      )}
-    </Card>
+      {live.error && <p className="sect text-xs text-danger">{live.error}</p>}
+
+      <div className="sect">
+        <div className="mb-1 text-xs text-text-dim">进度曲线</div>
+        <ProgressChart
+          points={live.progress}
+          maxMoves={run.budget.max_moves}
+        />
+      </div>
+
+      <details className="sect" open>
+        <summary>工具日志</summary>
+        <ToolLog logs={live.logs} />
+      </details>
+
+      {showCancel &&
+        (run.status === 'queued' || run.status === 'running') && (
+          <div className="mt-3">
+            <Button
+              variant="danger"
+              type="button"
+              onClick={onCancel}
+              disabled={cancelling}
+            >
+              取消 run
+            </Button>
+          </div>
+        )}
+    </aside>
   )
 }
 
@@ -269,6 +316,7 @@ export default function RunPage() {
   }
   const provider =
     providers.data?.find((item) => item.id === run.provider_id) ?? null
+  const liveNow = run.status === 'queued' || run.status === 'running'
   const resultError = report.error
     ? describeError(report.error)
     : run.status === 'failed'
@@ -278,31 +326,53 @@ export default function RunPage() {
         : null
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold">
-          Run {shortId(run.id)}
-        </h1>
-        <span data-testid="run-status">
-          <StatusBadge status={run.status} />
-        </span>
-        <Link className="text-sm text-text-dim" to="/runs">
-          返回历史
+    <div className="space-y-5">
+      <PageHeader
+        title={provider?.name ?? `Run ${shortId(run.id)}`}
+        subtitle={benchmark.data?.name ?? run.benchmark_id}
+        actions={
+          <>
+            {liveNow && (
+              <Button
+                variant="danger"
+                type="button"
+                onClick={() => cancel.mutate()}
+                disabled={cancel.isPending}
+              >
+                取消 run
+              </Button>
+            )}
+            <span data-testid="run-status">
+              <StatusBadge status={run.status} />
+            </span>
+          </>
+        }
+      />
+      <nav
+        aria-label="面包屑"
+        className="-mt-2 flex items-center gap-1.5 text-xs text-text-dim"
+      >
+        <Link className="hover:text-text" to="/runs">
+          Runs
         </Link>
-      </div>
-      {cancel.error && (
-        <Alert>{describeError(cancel.error)}</Alert>
-      )}
+        <span>/</span>
+        <span className="font-mono text-text">
+          {shortId(run.id)}
+        </span>
+      </nav>
+
+      {cancel.error && <Alert>{describeError(cancel.error)}</Alert>}
 
       {live.connection === 'reconnecting' && (
         <div
           data-testid="connection-banner"
           role="alert"
-          className="flex flex-wrap items-center gap-3 rounded border border-amber-700 bg-amber-950/40 px-3 py-2 text-sm text-amber-200"
+          className="flex flex-wrap items-center gap-3 rounded-[7px] border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-amber-200"
         >
           <span>连接中断，正在重连…</span>
           <Button
             variant="warning"
+            size="sm"
             type="button"
             data-testid="retry-connection"
             onClick={() => live.retry()}
@@ -312,70 +382,87 @@ export default function RunPage() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="relative space-y-3">
-          <div className="relative">
-            <CubeView
-              state={cubeReset.state}
-              resetToken={cubeReset.token}
-              batch={live.latestBatch}
-              speed={speed}
-              paused={paused}
-              skipToken={skipToken}
-              viewRequest={viewRequest ?? undefined}
-              idleSpin={!finished}
-            />
-            <ViewPresets
-              onRequest={(preset) =>
-                setViewRequest((current) => ({
-                  preset,
-                  token: (current?.token ?? 0) + 1,
-                }))
-              }
-            />
+      <div className="live-shell">
+        <div className={finished ? '' : 'live-grid'}>
+          <div className="live-stage">
+            <div className="absolute inset-x-4 top-3.5 z-10 flex items-center gap-2.5 text-xs text-text-faint">
+              <span className="font-mono">{run.tool_mode}</span>
+              {live.currentEpisode && (
+                <>
+                  <span>·</span>
+                  <span className="font-mono text-text-dim">
+                    {live.currentEpisode.task_key}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center px-6 pt-12 pb-2">
+              <CubeView
+                state={cubeReset.state}
+                resetToken={cubeReset.token}
+                batch={live.latestBatch}
+                speed={speed}
+                paused={paused}
+                skipToken={skipToken}
+                viewRequest={viewRequest ?? undefined}
+                idleSpin={liveNow}
+              />
+            </div>
+            <div className="border-t border-line-soft px-4 py-2.5">
+              <FaceLegend />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Select
+                  aria-label="速度"
+                  className="h-7 w-[84px] text-xs"
+                  value={speed}
+                  onChange={(event) => setSpeed(Number(event.target.value))}
+                >
+                  <option value={0.5}>0.5×</option>
+                  <option value={1}>1×</option>
+                  <option value={2}>2×</option>
+                  <option value={100}>instant</option>
+                </Select>
+                <button
+                  type="button"
+                  className="pill"
+                  data-on={paused}
+                  onClick={() => setPaused((current) => !current)}
+                >
+                  {paused ? '继续' : '暂停'}
+                </button>
+                <button
+                  type="button"
+                  className="pill"
+                  onClick={() => setSkipToken((current) => current + 1)}
+                >
+                  跳到最新
+                </button>
+                <div className="ml-auto">
+                  <ViewPresets
+                    onRequest={(preset) =>
+                      setViewRequest((current) => ({
+                        preset,
+                        token: (current?.token ?? 0) + 1,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
           </div>
-          <FaceLegend />
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="flex items-center gap-2">
-              <span className="text-text-dim">速度</span>
-              <Select
-                aria-label="速度"
-                value={speed}
-                onChange={(event) =>
-                  setSpeed(Number(event.target.value))
-                }
-              >
-                <option value={0.5}>0.5×</option>
-                <option value={1}>1×</option>
-                <option value={2}>2×</option>
-                <option value={100}>instant</option>
-              </Select>
-            </label>
-            <Button
-              type="button"
-              onClick={() => setPaused((current) => !current)}
-            >
-              {paused ? '继续' : '暂停'}
-            </Button>
-            <Button
-              type="button"
-              onClick={() => setSkipToken((current) => current + 1)}
-            >
-              跳到最新
-            </Button>
-          </div>
-        </div>
 
-        {!finished && (
-          <RunLivePanel
-            live={live}
-            run={run}
-            benchmark={benchmark.data ?? null}
-            provider={provider}
-            onCancel={() => cancel.mutate()}
-            cancelling={cancel.isPending}
-          />
-        )}
+          {!finished && (
+            <RunLivePanel
+              live={live}
+              run={run}
+              benchmark={benchmark.data ?? null}
+              provider={provider}
+              onCancel={() => cancel.mutate()}
+              cancelling={cancel.isPending}
+              showCancel={false}
+            />
+          )}
+        </div>
       </div>
 
       {finished && (

@@ -15,14 +15,14 @@ export default defineConfig({
   webServer: [
     {
       command:
-        'uv run python scripts/fake_openai_server.py --port 20129 --api-key test',
+        'uv run --frozen python scripts/fake_openai_server.py --port 20129 --api-key test',
       cwd: '..',
       url: 'http://127.0.0.1:20129/health',
       reuseExistingServer: false,
       timeout: 60_000,
     },
     {
-      command: `uv run mofang serve --port 8000 --db ${dbPath}`,
+      command: `uv run --frozen mofang serve --port 8000 --db ${dbPath}`,
       cwd: '..',
       url: 'http://127.0.0.1:8000/api/benchmarks',
       reuseExistingServer: false,

@@ -34,4 +34,24 @@ describe('PageHeader', () => {
     expect(actions).not.toBeNull()
     expect(actions).toHaveTextContent('导出')
   })
+
+  it('eyebrow 三段式：eyebrow 行 + 大标题（P0）', () => {
+    render(
+      <MemoryRouter>
+        <PageHeader eyebrow="CUBE · RUNS" title="运行记录" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('CUBE · RUNS')).toBeInTheDocument()
+    expect(screen.getByText('CUBE · RUNS')).toHaveClass('tracking-eyebrow')
+    expect(screen.getByRole('heading', { name: '运行记录' })).toHaveClass('text-3xl')
+  })
+
+  it('无 eyebrow 时保持原字号（兼容路线）', () => {
+    render(
+      <MemoryRouter>
+        <PageHeader title="运行记录" />
+      </MemoryRouter>,
+    )
+    expect(screen.getByRole('heading', { name: '运行记录' })).toHaveClass('text-2xl')
+  })
 })

@@ -62,7 +62,7 @@ export function ProgressChart({
         data-testid="progress-path"
         d={path}
         fill="none"
-        stroke="#34d399"
+        className="stroke-accent"
         strokeWidth="2"
       />
       <circle
@@ -70,7 +70,7 @@ export function ProgressChart({
         cx={x(last.moves)}
         cy={y(last.length ?? 0)}
         r="4"
-        className="animate-pulse-ring fill-emerald-300/60"
+        className="animate-pulse-ring fill-accent/60"
       />
     </svg>
   )

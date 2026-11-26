@@ -23,6 +23,13 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: 'go' })).toHaveClass(expected)
   })
 
+  it('primary 实心 lime 深字（P0）', () => {
+    render(<Button variant="primary">go</Button>)
+    const button = screen.getByRole('button', { name: 'go' })
+    expect(button).toHaveClass('rounded-md')
+    expect(button).toHaveClass('text-on-accent')
+  })
+
   it('defaults to secondary and passes through type and disabled', () => {
     render(
       <Button type="submit" disabled>

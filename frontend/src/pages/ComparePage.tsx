@@ -7,6 +7,7 @@ import { formatPercent, shortId } from '../lib/format'
 import { Alert } from '../ui/Alert'
 import { AnimatedNumber } from '../ui/AnimatedNumber'
 import { Card } from '../ui/Card'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Table, Td, Th } from '../ui/Table'
 
@@ -50,13 +51,14 @@ function CompareView({
   if (compare.error || !compare.data) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold">Run 对比</h1>
-        <Alert tone="danger">
-          {compare.error ? describeError(compare.error) : '对比数据缺失'}
-        </Alert>
-        <Link className="text-accent" to="/runs">
-          返回 Runs
-        </Link>
+      <PageHeader
+        eyebrow="评测记录"
+        title="Run 对比"
+        back={{ to: '/runs', label: '返回 Runs' }}
+      />
+      <Alert tone="danger">
+        {compare.error ? describeError(compare.error) : '对比数据缺失'}
+      </Alert>
       </div>
     )
   }
@@ -67,30 +69,36 @@ function CompareView({
   ]
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Run 对比</h1>
-        <Link className="text-accent" to="/runs">
-          返回 Runs
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="评测记录"
+        title="Run 对比"
+        back={{ to: '/runs', label: '返回 Runs' }}
+      />
       <div className="grid gap-3 sm:grid-cols-2">
         {sideRuns.map((run, index) => {
           const fallbackId = index === 0 ? firstId : secondId
           return (
             <Card key={fallbackId} className="space-y-1 p-4 text-sm">
               {run ? (
-                <Link
-                  className="text-accent"
-                  to={`/runs/${encodeURIComponent(run.id)}`}
-                >
-                  {shortId(run.id)}
-                </Link>
+                <>
+                  <Link
+                    className="text-sm font-semibold text-text-strong hover:text-accent"
+                    to={`/runs/${encodeURIComponent(run.id)}`}
+                  >
+                    {providerNames.get(run.provider_id) ?? run.provider_id}
+                  </Link>
+                  <span className="ml-2 font-mono text-xs text-text-dim">
+                    {shortId(run.id)}
+                  </span>
+                </>
               ) : (
-                <span>{shortId(fallbackId)}</span>
+                <span className="font-mono text-xs text-text-dim">
+                  {shortId(fallbackId)}
+                </span>
               )}
               <div className="text-text-dim">
                 {run
-                  ? `${providerNames.get(run.provider_id) ?? run.provider_id} · ${benchmarkNames.get(run.benchmark_id) ?? run.benchmark_id}`
+                  ? benchmarkNames.get(run.benchmark_id) ?? run.benchmark_id
                   : 'run 信息不在当前列表中'}
               </div>
               <div>
@@ -171,14 +179,15 @@ export default function ComparePage() {
   if (ids.length !== 2) {
     return (
       <div className="space-y-4">
-        <h1 className="text-2xl font-semibold">Run 对比</h1>
-        <Alert tone="danger">
-          链接不完整：需要恰好两个 run id（/compare?runs=a,b）
-        </Alert>
-        <Link className="text-accent" to="/runs">
-          返回 Runs
-        </Link>
-      </div>
+      <PageHeader
+        eyebrow="评测记录"
+        title="Run 对比"
+        back={{ to: '/runs', label: '返回 Runs' }}
+      />
+      <Alert tone="danger">
+        链接不完整：需要恰好两个 run id（/compare?runs=a,b）
+      </Alert>
+    </div>
     )
   }
   return <CompareView firstId={ids[0]} secondId={ids[1]} />

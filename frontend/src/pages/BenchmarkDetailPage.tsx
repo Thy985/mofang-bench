@@ -7,6 +7,7 @@ import { formatDate } from '../lib/format'
 import type { BenchmarkDetail, SelfcheckResult } from '../api/types'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Table, Td, Th } from '../ui/Table'
 
@@ -39,26 +40,25 @@ export function BenchmarkDetailView({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">{benchmark.name}</h1>
-      <p className="text-sm text-text-dim">
-        {benchmark.id} · {benchmark.cube} · {benchmark.tasks.length} 题 ·
-        hash {benchmark.content_hash} · 冻结{' '}
-        {formatDate(benchmark.frozen_at)}
+      <PageHeader
+        eyebrow="题集"
+        title={benchmark.name}
+        subtitle={`${benchmark.id} · ${benchmark.cube} · ${benchmark.tasks.length} 题 · hash ${benchmark.content_hash} · 冻结 ${formatDate(benchmark.frozen_at)}}`}
+        actions={
+          <Button
+            type="button"
+            data-testid="selfcheck-button"
+            loading={checking}
+            onClick={() => void handleSelfcheck()}
+          >
+            Harness 自检
+          </Button>
+        }
+      />
+      <p className="text-xs text-text-dim">
+        用参照解走同一条工具链（不调 LLM）：全部通过说明工具链与状态引擎对
+        「正确的解题者」可行，失败可归因到模型而非 harness。
       </p>
-      <div>
-        <Button
-          type="button"
-          data-testid="selfcheck-button"
-          loading={checking}
-          onClick={() => void handleSelfcheck()}
-        >
-          Harness 自检
-        </Button>
-        <p className="mt-1 text-xs text-text-dim">
-          用参照解走同一条工具链（不调 LLM）：全部通过说明工具链与状态引擎对
-          「正确的解题者」可行，失败可归因到模型而非 harness。
-        </p>
-      </div>
       {checkError && <Alert tone="danger">{checkError}</Alert>}
       {result && (
         <div data-testid="selfcheck-result" className="space-y-2">

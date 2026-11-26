@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useFollowScroll } from '../hooks/useFollowScroll'
 import { Button } from '../ui/Button'
 
-// 流式思考面板：max-h-72 内部滚动 + 跟随滚动 + 复制。
+// 流式思考面板：内部滚动 + 跟随滚动 + 复制。
 // 折叠状态由本组件 useState 自持；组件跨 turn 不卸载，记忆自然成立。
 export function ThinkingPanel({ text }: { text: string }) {
   const [open, setOpen] = useState(true)
@@ -24,18 +24,15 @@ export function ThinkingPanel({ text }: { text: string }) {
     <details
       open={open}
       data-testid="thinking-panel"
+      className="sect"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="cursor-pointer text-sky-300">思考中…</summary>
+      <summary>思考中…</summary>
       {/* 空 text（turn 结束清空）时只留 summary 空态：组件跨 turn 保持挂载，
           折叠/展开记忆由上方 useState 自持，滚动/复制逻辑不变 */}
       {text && (
-        <div className="relative mt-1">
-          <pre
-            ref={ref}
-            onScroll={onScroll}
-            className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded bg-sunken p-2 text-xs text-text-dim"
-          >
+        <div className="relative mt-2">
+          <pre ref={ref} onScroll={onScroll} className="stream">
             {text}
           </pre>
           {!following && (
@@ -43,7 +40,7 @@ export function ThinkingPanel({ text }: { text: string }) {
               type="button"
               data-testid="thinking-follow"
               onClick={scrollToBottom}
-              className="absolute right-2 bottom-2 rounded bg-surface-2 px-2 py-1 text-xs text-text shadow"
+              className="absolute right-2 bottom-2 rounded bg-surface-2 px-2 py-1 text-[11px] text-text"
             >
               回到底部
             </button>

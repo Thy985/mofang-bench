@@ -7,6 +7,7 @@ const BenchmarkDetailPage = lazy(() => import('./pages/BenchmarkDetailPage'))
 const BenchmarksPage = lazy(() => import('./pages/BenchmarksPage'))
 const ComparePage = lazy(() => import('./pages/ComparePage'))
 const EpisodePage = lazy(() => import('./pages/EpisodePage'))
+const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'))
 const NewRunPage = lazy(() => import('./pages/NewRunPage'))
 const ProvidersPage = lazy(() => import('./pages/ProvidersPage'))
 const RunPage = lazy(() => import('./pages/RunPage'))
@@ -27,6 +28,10 @@ export default function App() {
           element={suspense(<BenchmarkDetailPage />)}
         />
         <Route path="runs" element={suspense(<RunsPage />)} />
+        <Route
+          path="leaderboard"
+          element={suspense(<LeaderboardPage />)}
+        />
         <Route path="runs/new" element={suspense(<NewRunPage />)} />
         <Route path="runs/:id" element={suspense(<RunPage />)} />
         <Route path="compare" element={suspense(<ComparePage />)} />

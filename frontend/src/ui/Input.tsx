@@ -1,7 +1,7 @@
 import { useId, type InputHTMLAttributes } from 'react'
 
 const FIELD =
-  'rounded-md bg-sunken px-3 py-2 text-sm transition-colors duration-fast placeholder:text-text-dim focus-visible:outline-2 focus-visible:outline-accent'
+  'h-[34px] w-full rounded-[7px] border border-line bg-sunken px-2.5 text-[13px] text-text-strong transition-colors duration-fast placeholder:text-text-faint hover:border-[#333a43] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-accent/25'
 
 export function Input({
   label,
@@ -16,7 +16,7 @@ export function Input({
     <input
       id={inputId}
       aria-invalid={error ? true : undefined}
-      className={`${FIELD} ${error ? 'border border-danger' : 'border border-transparent'} ${className}`}
+      className={`${FIELD} ${error ? 'border-danger' : ''} ${className}`}
       {...rest}
     />
   )
@@ -30,7 +30,7 @@ export function Input({
         </label>
       )}
       {field}
-      {error && <p className="text-xs text-rose-300">{error}</p>}
+      {error && <p className="text-xs text-danger">{error}</p>}
     </div>
   )
 }

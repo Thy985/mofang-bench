@@ -1,4 +1,3 @@
-import { motion } from 'motion/react'
 import type { Phase } from '../hooks/liveReducer'
 
 const STEPS: { key: Phase; label: string }[] = [
@@ -11,10 +10,7 @@ const STEPS: { key: Phase; label: string }[] = [
 export function PhaseStepper({ phase }: { phase: Phase }) {
   const activeIndex = STEPS.findIndex((step) => step.key === phase)
   return (
-    <ol
-      data-testid="phase-stepper"
-      className="flex flex-wrap items-center gap-1.5 text-xs"
-    >
+    <ol data-testid="phase-stepper" className="flex gap-1.5">
       {STEPS.map((step, index) => {
         const state =
           index < activeIndex
@@ -23,42 +19,28 @@ export function PhaseStepper({ phase }: { phase: Phase }) {
               ? 'active'
               : 'pending'
         return (
-          <li key={step.key} className="flex items-center gap-1.5">
-            {index > 0 && <span aria-hidden className="h-px w-4 bg-line" />}
+          <li key={step.key} className="min-w-0 flex-1">
             <span
               data-testid={`phase-${step.key}`}
               data-state={state}
-              className={`relative flex items-center gap-1 rounded px-1.5 py-0.5 ${
-                state === 'active' ? 'text-accent' : 'text-text-dim'
+              className={`block h-[3px] rounded-full ${
+                state === 'active'
+                  ? 'bg-accent'
+                  : state === 'done'
+                    ? 'bg-[#3a434e]'
+                    : 'bg-line'
+              }`}
+            />
+            <span
+              className={`mt-1.5 block truncate text-[11px] ${
+                state === 'active'
+                  ? 'text-accent'
+                  : state === 'pending'
+                    ? 'text-text-faint'
+                    : 'text-text-dim'
               }`}
             >
-              {state === 'active' && (
-                <motion.span
-                  layoutId="phase-active"
-                  className="absolute inset-0 rounded bg-accent-soft"
-                  transition={{ duration: 0.15, ease: 'easeOut' }}
-                />
-              )}
-              <span className="relative flex items-center gap-1">
-                {state === 'done' && '✓'}
-                {state === 'done' ? (
-                  <span className="text-text-dim">{step.label}</span>
-                ) : (
-                  step.label
-                )}
-                {state === 'active' && (
-                  <motion.span
-                    aria-hidden
-                    className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
-                    animate={{ rotate: 360 }}
-                    transition={{
-                      repeat: Infinity,
-                      duration: 1,
-                      ease: 'linear',
-                    }}
-                  />
-                )}
-              </span>
+              {step.label}
             </span>
           </li>
         )

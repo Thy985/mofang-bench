@@ -127,6 +127,7 @@ const run: Run = {
     max_seconds: 300,
     turn_timeout: 120,
   },
+  solver: 'off',
 }
 
 const totals: AggregateReport = {
@@ -296,17 +297,132 @@ describe('NewRunView', () => {
         />
       </MemoryRouter>,
     )
-    expect(screen.getByTestId('newrun-require-plan')).toBeChecked()
+    const plan = screen.getByTestId('newrun-require-plan')
+    expect(within(plan).getByRole('radio', { name: /^开启/ })).toBeChecked()
     await user.click(screen.getByRole('button', { name: '启动 run' }))
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
     expect(onCreate.mock.calls[0][0].require_plan).toBe(true)
     // 关掉计划模式再提交
     onCreate.mockClear()
-    await user.click(screen.getByTestId('newrun-require-plan'))
-    expect(screen.getByTestId('newrun-require-plan')).not.toBeChecked()
+    await user.click(within(plan).getByRole('radio', { name: /^关闭/ }))
+    expect(within(plan).getByRole('radio', { name: /^关闭/ })).toBeChecked()
     await user.click(screen.getByRole('button', { name: '启动 run' }))
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
     expect(onCreate.mock.calls[0][0].require_plan).toBe(false)
+  })
+
+  // 模式摘要徽章：与四组 ModeCards 联动，计划开启时提亮
+  it('模式摘要徽章随选择联动', async () => {
+    const user = userEvent.setup()
+    renderView()
+    const summary = screen.getByTestId('newrun-mode-summary')
+    expect(summary).toHaveTextContent('计划 ON')
+    const plan = screen.getByTestId('newrun-require-plan')
+    await user.click(within(plan).getByRole('radio', { name: /^关闭/ }))
+    expect(summary).toHaveTextContent('计划 OFF')
+    const solver = screen.getByRole('radiogroup', { name: '求解器辅助' })
+    await user.click(
+      within(solver).getByRole('radio', { name: /assist/ }),
+    )
+    expect(summary).toHaveTextContent('求解器 assist')
+  })
+
+  it('submits solver=off by default and solver=assist when selected', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    const solver = screen.getByRole('radiogroup', { name: '求解器辅助' })
+    expect(within(solver).getByRole('radio', { name: /off/ })).toBeChecked()
+    await user.click(
+      within(solver).getByRole('radio', { name: /assist/ }),
+    )
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0].solver).toBe('assist')
+  })
+
+  it('submits skill=ortega, raises max_moves, and keeps solver off', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn().mockResolvedValue(undefined)
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          onCreate={onCreate}
+        />
+      </MemoryRouter>,
+    )
+    const skill = screen.getByRole('radiogroup', { name: '方法 pack（skill）' })
+    expect(within(skill).getByRole('radio', { name: /none/ })).toBeChecked()
+    await user.click(
+      within(skill).getByRole('radio', { name: /ortega/ }),
+    )
+    // skill 模式把 2x2 的 max_moves 默认抬到 36，solver 回落 off
+    expect(screen.getByLabelText('max_moves')).toHaveValue(36)
+    const solver = screen.getByRole('radiogroup', { name: '求解器辅助' })
+    expect(within(solver).getByRole('radio', { name: /off/ })).toBeChecked()
+    await user.click(screen.getByRole('button', { name: '启动 run' }))
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1))
+    expect(onCreate.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        solver: 'off',
+        skill: 'ortega',
+        budget: expect.objectContaining({ max_moves: 36 }),
+      }),
+    )
+  })
+
+  it('disables skill while solver=assist and explains the conflict', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          onCreate={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    const solver = screen.getByRole('radiogroup', { name: '求解器辅助' })
+    await user.click(
+      within(solver).getByRole('radio', { name: /assist/ }),
+    )
+    const skill = screen.getByRole('radiogroup', { name: '方法 pack（skill）' })
+    expect(within(skill).getByRole('radio', { name: /ortega/ })).toBeDisabled()
+    expect(within(skill).getByRole('radio', { name: /lbl/ })).toBeDisabled()
+    expect(
+      screen.getByText(/assist 与 skill 首版互斥/),
+    ).toBeInTheDocument()
+  })
+
+  it('only enables the pack that matches the selected cube', () => {
+    render(
+      <MemoryRouter>
+        <NewRunView
+          providers={[provider]}
+          benchmarks={benchmarks}
+          benchmarkId="b2"
+          onCreate={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    const skill = screen.getByRole('radiogroup', { name: '方法 pack（skill）' })
+    expect(
+      within(skill).getByRole('radio', { name: /ortega/ }),
+    ).not.toBeDisabled()
+    expect(within(skill).getByRole('radio', { name: /lbl/ })).toBeDisabled()
   })
 
   it.each([
@@ -342,7 +458,7 @@ describe('NewRunView', () => {
     )
     expect(screen.getByLabelText('Benchmark')).toHaveValue('b3')
     expect(screen.getByLabelText('max_moves')).toHaveValue(100)
-    expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
+    expect(screen.getByLabelText('max_seconds')).toHaveValue(2400)
   })
 
   it('shows a query error instead of the empty guides', () => {
@@ -515,7 +631,7 @@ describe('RunsView', () => {
     )
   })
 
-  it('lists columns in spec order with scoped headers', () => {
+  it('renders the run card with eyebrow and core fields', () => {
     render(
       <MemoryRouter>
         <RunsView
@@ -525,19 +641,15 @@ describe('RunsView', () => {
         />
       </MemoryRouter>,
     )
-    const headers = screen.getAllByRole('columnheader')
-    expect(headers.map((header) => header.textContent)).toEqual([
-      '选择',
-      'run',
-      'provider',
-      'benchmark',
-      '状态',
-      '创建时间',
-      '解出率',
-    ])
-    for (const header of headers) {
-      expect(header).toHaveAttribute('scope', 'col')
-    }
+    expect(screen.getByText('评测记录')).toBeInTheDocument()
+    const row = screen.getByTestId('run-row')
+    expect(row).toHaveTextContent('local')
+    expect(row).toHaveTextContent('two')
+    expect(row).toHaveTextContent('已完成')
+    expect(within(row).getByRole('link')).toHaveAttribute(
+      'href',
+      '/runs/run12345678',
+    )
   })
 
   // solve_rate 用后端独有值（1/2 本地算会得 50%），确保前端不自行计算
@@ -629,7 +741,7 @@ describe('NewRunPage', () => {
     await waitFor(() => expect(select.value).toBe('b3'))
     // 预算默认跟随选中题集的 cube，在选中态变化后的下一次 effect 里落定
     await waitFor(() => expect(screen.getByLabelText('max_moves')).toHaveValue(100))
-    expect(screen.getByLabelText('max_seconds')).toHaveValue(900)
+    expect(screen.getByLabelText('max_seconds')).toHaveValue(2400)
   })
 
   it('surfaces providers load failures instead of an empty guide', async () => {

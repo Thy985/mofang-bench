@@ -14,8 +14,10 @@ import { formatDate, shortId } from '../lib/format'
 import { readInteger, readPositiveInt } from '../lib/validate'
 import { Alert } from '../ui/Alert'
 import { Button } from '../ui/Button'
+import { ChoiceChips } from '../ui/ChoiceChips'
 import { EmptyState } from '../ui/EmptyState'
 import { Input } from '../ui/Input'
+import { PageHeader } from '../ui/PageHeader'
 import { PageSkeleton } from '../ui/PageSkeleton'
 import { Select } from '../ui/Select'
 import { useToast } from '../ui/Toast'
@@ -191,12 +193,12 @@ export function BenchmarksView({
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Benchmarks</h1>
+      <PageHeader eyebrow="题集" title="Benchmarks" />
       {error && <Alert tone="danger">{error}</Alert>}
       <form
         onSubmit={handleSubmit}
         data-testid="benchmark-form"
-        className="grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
+        className="clip-slant-r grid gap-3 rounded border border-line bg-surface p-4 md:grid-cols-2"
       >
         <label className="grid gap-1 text-sm">
           <span>名称</span>
@@ -221,20 +223,21 @@ export function BenchmarksView({
           </Select>
         </label>
         <div id="benchmark-depths" className="grid gap-1 text-sm md:col-span-2">
-          <span>打乱深度</span>
-          <div className="flex flex-wrap gap-3">
-            {DEPTHS.map((depth) => (
-              <label key={depth} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={form.depths.includes(depth)}
-                  disabled={form.cube === '2x2' && depth === 20}
-                  onChange={() => toggleDepth(depth)}
-                />
-                <span>深度 {depth}</span>
-              </label>
-            ))}
+          <div className="flex items-center justify-between">
+            <span>打乱深度</span>
+            <span className="text-xs text-text-dim">
+              已选 {form.depths.length}/{DEPTHS.length}
+            </span>
           </div>
+          <ChoiceChips
+            options={DEPTHS.map((depth) => ({
+              value: String(depth),
+              title: `深度 ${depth}`,
+              disabled: form.cube === '2x2' && depth === 20,
+            }))}
+            selected={new Set(form.depths.map(String))}
+            onToggle={(value) => toggleDepth(Number(value))}
+          />
           {form.cube === '3x3' && (
             <p className="text-xs text-amber-400">
               3x3 生成需要已构建 twophase 表，可能较慢。
