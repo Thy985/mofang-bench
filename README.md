@@ -196,8 +196,17 @@ U4 信息密度已落地：Runs 页支持 provider/benchmark/状态筛选与创�
    进程中断），`stopped_unsolved / budget_exceeded / protocol_error` 记模型侧；
    信号纠正误判——progress≥0.5 的失败可能是预算太紧（可调大 budget），
    大量协议错误可能是提示词/工具描述不清（harness 侧可改进），
-   零进展是模型侧证据。episode 级的 `provider_errors` 现在记录真实的
-   退避重试 + ProviderError 次数（进出场差值）。
+零进展是模型侧证据。episode 级的 `provider_errors` 现在记录真实的
+退避重试 + ProviderError 次数（进出场差值）。`provider_error` 会解析错误
+原文给出**单一主类别**信号（429 限流 / 凭证无效 / 模型名不识别 / 服务端
+5xx / 超时），`timeout` 区分单轮（turn_timeout）与整局（max_seconds）
+倒计时；计数类信息（provider 退避次数、协议错误次数）按整局汇总为
+`provider_errors_total` / `protocol_errors_total`，不混进 signals 文案。
+**思考不算失败**：模型可能思考完一次性给出动作，也可能 ReAct 多轮，只要
+没耗尽倒计时就不归因成「未执行任何操作」——失败由超时/预算/协议结果界定。
+可重试的 provider 瞬时故障（429 / 网络抖动 / 5xx / httpx 超时）由 episode
+内**断点续跑**兜底：保留状态、对话记录与已计 tokens，退避后重发本轮
+（上限 2 次，8s→20s）；auth / bad_request 不重试。
 3. **对照消融**：计划模式是 per-run 开关（同模型开/关对比）；
    New Run 支持多选模型批量建 run——同一 provider 勾选两次即可重复 N 次测方差。
 
