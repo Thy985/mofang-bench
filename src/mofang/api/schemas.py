@@ -73,6 +73,10 @@ class RunCreate(BaseModel):
     task_keys: list[str] | None = None
     # 计划模式：要求 agent 先调用 submit_plan 提交目标与分阶段计划。
     require_plan: bool = False
+    # 求解器辅助：off 不注册 solve 工具；assist 注册但只给建议、不自动执行。
+    solver: Literal["off", "assist"] = "off"
+    # 方法 pack：none 不注入；ortega 只对 2x2、lbl 只对 3x3；首版与 assist 互斥。
+    skill: Literal["none", "ortega", "lbl"] = "none"
     params: dict[str, Any] = Field(default_factory=dict)
     budget: dict[str, Any] = Field(default_factory=dict)
 
@@ -89,6 +93,8 @@ class RunOut(BaseModel):
     error: str | None
     task_keys: list[str] | None = None
     require_plan: bool = False
+    solver: Literal["off", "assist"] = "off"
+    skill: str = "none"
     created_at: str
     started_at: str | None
     finished_at: str | None
@@ -112,6 +118,8 @@ class EpisodeOut(BaseModel):
     failure_code: str | None
     error: str | None
     plan: dict[str, Any] | None = None
+    solver: str = "off"
+    skill: str = "none"
     started_at: str | None
     finished_at: str | None
 

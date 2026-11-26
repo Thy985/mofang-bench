@@ -55,7 +55,7 @@ class OpenAICompatibleAdapter:
         model: str,
         *,
         client: httpx.AsyncClient | None = None,
-        retry_delay: float = 1.0,
+        retry_delay: float = 2.0,
         timeout: float = DEFAULT_TIMEOUT,
         stream: bool = True,
     ) -> None:
@@ -70,7 +70,12 @@ class OpenAICompatibleAdapter:
         # 失败归因用的计数器：requests=HTTP 尝试次数（含重试）、
         # retries=退避重试次数、errors=最终抛出的 ProviderError 次数。
         # EpisodeRunner 用进出场差值把环境侧异常摊到具体 episode。
-        self.stats = {"requests": 0, "retries": 0, "errors": 0}
+        self.stats = {
+            "requests": 0,
+            "retries": 0,
+            "errors": 0,
+            "truncations": 0,
+        }
         self._client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=10.0)
         )
@@ -151,6 +156,8 @@ class OpenAICompatibleAdapter:
         if params.max_tokens <= MAX_TOKENS_FALLBACK:
             return None
         self.max_tokens_downgraded = True
+        # 降级只保证请求能发出去，不保证 reasoning 能写完；截断由
+        # EpisodeRunner 用 finish_reason=length 显式处理。
         return replace(params, max_tokens=MAX_TOKENS_FALLBACK)
 
     def _build_payload(
@@ -182,6 +189,8 @@ class OpenAICompatibleAdapter:
     ) -> httpx.Response | None:
         """打开流式响应；返回 None 表示网关不支持流式（应降级）。"""
         last_error: str | None = None
+        # 退避序列 retry_delay*(1,2,4)；默认 2s 时合计 14s，覆盖网关 8-10s
+        # 的 429 reset 窗口。这些 sleep 计入 EpisodeRunner 的 turn_timeout。
         for attempt in range(4):
             self.stats["requests"] += 1
             try:
@@ -305,6 +314,8 @@ class OpenAICompatibleAdapter:
                     raw_arguments=raw_arguments,
                 )
             )
+        if finish_reason == "length":
+            self.stats["truncations"] += 1
         return ModelTurn(
             content=content,
             reasoning=reasoning_text,
@@ -315,6 +326,7 @@ class OpenAICompatibleAdapter:
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: str | None = None
+        # 与 _open_stream 相同：默认退避 2+4+8=14s，覆盖 8-10s 限流窗口。
         for attempt in range(4):
             self.stats["requests"] += 1
             try:
@@ -377,6 +389,9 @@ class OpenAICompatibleAdapter:
         content, think = split_think(message.get("content"))
         if think:
             reasoning = f"{reasoning}\n{think}" if reasoning else think
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            self.stats["truncations"] += 1
         return ModelTurn(
             content=content,
             reasoning=reasoning,
@@ -386,7 +401,7 @@ class OpenAICompatibleAdapter:
                 completion_tokens=int(usage.get("completion_tokens") or 0),
             ),
             raw=data,
-            finish_reason=choice.get("finish_reason"),
+            finish_reason=finish_reason,
         )
 
     async def probe_tools(self) -> bool:

@@ -58,6 +58,29 @@ async def test_parses_tool_call(adapter: OpenAICompatibleAdapter) -> None:
 
 
 @respx.mock
+async def test_records_truncation_on_length_finish(
+    adapter: OpenAICompatibleAdapter,
+) -> None:
+    respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"content": "partial"},
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+            },
+        )
+    )
+    turn = await adapter.chat([{"role": "user", "content": "go"}], [], ModelParams())
+    assert turn.finish_reason == "length"
+    assert adapter.stats["truncations"] == 1
+
+
+@respx.mock
 async def test_malformed_arguments(adapter: OpenAICompatibleAdapter) -> None:
     respx.post(f"{BASE}/chat/completions").mock(
         return_value=httpx.Response(
@@ -289,7 +312,7 @@ async def test_chat_downgrades_max_tokens_on_400(
     turn = await adapter.chat(
         [{"role": "user", "content": "go"}],
         [],
-        ModelParams(max_tokens=16384),
+        ModelParams(max_tokens=32000),
     )
     assert turn.content == "ok"
     assert route.call_count == 2
@@ -365,7 +388,7 @@ async def test_stream_downgrades_max_tokens_on_400(
     turn = await adapter.chat_stream(
         [{"role": "user", "content": "go"}],
         [],
-        ModelParams(max_tokens=16384),
+        ModelParams(max_tokens=32000),
     )
     assert turn.content == "ok"
     assert route.call_count == 2

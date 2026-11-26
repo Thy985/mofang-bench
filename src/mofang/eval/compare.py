@@ -69,6 +69,17 @@ def compare_runs(db: Database, run_ids: list[str]) -> dict:
         "content_hash": first_bench.content_hash,
         "tasks": len(keys),
         "runs": run_ids,
+        # solver 口径随对比固化；same_solver=false 表示 off/assist 被混比，
+        # 前端可据此提示，不把两种口径的 solved 直接等同。
+        "solver_first": first.get("solver", "off"),
+        "solver_second": second.get("solver", "off"),
+        "same_solver": first.get("solver", "off")
+        == second.get("solver", "off"),
+        # skill 口径与 solver 同级：none/ortega/lbl 不同组合不得直接混统计。
+        "skill_first": first.get("skill", "none"),
+        "skill_second": second.get("skill", "none"),
+        "same_skill": first.get("skill", "none")
+        == second.get("skill", "none"),
         "solve_rate_first": (
             sum(1 for item in keys if first_eps[item]["solved"]) / len(keys)
             if keys

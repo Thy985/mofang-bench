@@ -84,12 +84,15 @@ def test_run_lifecycle_report_and_export(tmp_path: Path) -> None:
         run_id = response.json()["id"]
         run = wait_finished(client, run_id)
         assert run["budget"]["max_moves"] == 30
-        assert run["budget"]["turn_timeout"] == 120.0
+        assert run["budget"]["turn_timeout"] == 600.0
+        assert run["solver"] == "off"
         assert run["status"] == "finished"
         episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
         assert episodes[0]["solved"] is True
+        assert episodes[0]["solver"] == "off"
         report = client.get(f"/api/runs/{run_id}/report").json()
         assert report["totals"]["solved"] == 1
+        assert report["solver"] == "off"
         steps = client.get(f"/api/episodes/{episodes[0]['id']}/steps").json()
         assert any(step["tool_name"] == "apply_moves" for step in steps)
         assert any(step["kind"] == "model_message" for step in steps)
@@ -98,7 +101,8 @@ def test_run_lifecycle_report_and_export(tmp_path: Path) -> None:
         csv = client.get(f"/api/runs/{run_id}/export?format=csv")
         assert csv.status_code == 200
         assert "apply_moves" not in csv.text
-        assert "task_id,status,solved" in csv.text
+        assert "task_id,solver,skill,status,solved" in csv.text
+        assert "off" in csv.text
         md = client.get(f"/api/runs/{run_id}/export?format=md")
         assert md.status_code == 200
         assert "| task_id |" in md.text
@@ -108,6 +112,118 @@ def test_run_lifecycle_report_and_export(tmp_path: Path) -> None:
             "GET", f"/api/runs/{run_id}/events?after=abc"
         ) as response:
             assert response.status_code == 422
+
+
+def test_run_records_and_exports_carry_solver_mode(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            )
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        run_id = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "solver": "assist",
+            },
+        ).json()["id"]
+        run = wait_finished(client, run_id)
+        assert run["solver"] == "assist"
+        episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
+        assert episodes[0]["solver"] == "assist"
+        report = client.get(f"/api/runs/{run_id}/report").json()
+        assert report["solver"] == "assist"
+        csv = client.get(f"/api/runs/{run_id}/export?format=csv").text
+        assert "task_id,solver,skill,status,solved" in csv
+        assert "assist" in csv
+        md = client.get(f"/api/runs/{run_id}/export?format=md").text
+        assert "| task_id | solver |" in md
+
+
+def test_skill_is_validated_recorded_and_exported(tmp_path: Path) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            )
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        base = {"provider_id": provider_id, "benchmark_id": benchmark_id}
+        # 阶数错配直接报参数错误，不静默降级成 none
+        mismatch = client.post("/api/runs", json={**base, "skill": "lbl"})
+        assert mismatch.status_code == 400
+        assert "lbl" in mismatch.json()["detail"]
+        assert "3x3" in mismatch.json()["detail"]
+        # 首版 skill 与 assist 互斥
+        clash = client.post(
+            "/api/runs", json={**base, "skill": "ortega", "solver": "assist"}
+        )
+        assert clash.status_code == 400
+        assert "互斥" in clash.json()["detail"]
+
+        run_id = client.post(
+            "/api/runs", json={**base, "skill": "ortega"}
+        ).json()["id"]
+        run = wait_finished(client, run_id)
+        assert run["skill"] == "ortega"
+        assert run["budget"]["max_moves"] == 40
+        assert run["budget"]["max_seconds"] == 1800.0
+        episodes = client.get(f"/api/runs/{run_id}").json()["episodes"]
+        assert episodes[0]["skill"] == "ortega"
+        report = client.get(f"/api/runs/{run_id}/report").json()
+        assert report["skill"] == "ortega"
+        assert "budget_warning" not in report
+        csv = client.get(f"/api/runs/{run_id}/export?format=csv").text
+        assert "task_id,solver,skill,status,solved" in csv
+        assert "ortega" in csv
+        md = client.get(f"/api/runs/{run_id}/export?format=md").text
+        assert "| task_id | solver | skill | status |" in md
+
+
+def test_skill_accepts_explicit_max_moves_but_warns_when_below_floor(
+    tmp_path: Path,
+) -> None:
+    client, benchmark_id = make_app(
+        tmp_path,
+        [
+            ModelTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="apply_moves", arguments={"moves": ["R'"]})
+                ]
+            )
+        ],
+    )
+    with client:
+        provider_id = seed(client)
+        run_id = client.post(
+            "/api/runs",
+            json={
+                "provider_id": provider_id,
+                "benchmark_id": benchmark_id,
+                "skill": "ortega",
+                "budget": {"max_moves": 20},
+            },
+        ).json()["id"]
+        run = wait_finished(client, run_id)
+        # 显式值优先，不被悄悄改成 36
+        assert run["budget"]["max_moves"] == 20
+        assert "budget_warning" in run["totals"]
+        assert "20" in run["totals"]["budget_warning"]
+        report = client.get(f"/api/runs/{run_id}/report").json()
+        assert "budget_warning" in report
 
 
 def test_sse_replays_and_finishes(tmp_path: Path) -> None:

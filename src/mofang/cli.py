@@ -12,6 +12,7 @@ from .eval.aggregate import aggregate_report
 from .models.provider import FakeProvider, ModelTurn, ProviderAdapter, ToolCall
 from .runner.budget import Budget
 from .runner.episode import EpisodeRunner
+from .service.factory import DEFAULT_BUDGETS
 from .tasks.generator import generate_benchmark
 from .tasks.models import Benchmark, Task
 
@@ -48,6 +49,22 @@ def _load_solver(args: argparse.Namespace):
     raise SystemExit(f"unsupported solver: {args.solver}")
 
 
+def _budget_from_args(args: argparse.Namespace, cube: str) -> Budget:
+    """CLI 默认预算与 Web/factory 同源；显式参数覆盖优先。"""
+    values = dict(DEFAULT_BUDGETS[cube])
+    for key in (
+        "max_moves",
+        "max_tool_calls",
+        "max_tokens",
+        "max_seconds",
+        "turn_timeout",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            values[key] = value
+    return Budget(**values)
+
+
 async def _run(args: argparse.Namespace) -> int:
     benchmark = Benchmark.load(Path(args.benchmark))
     if benchmark.cube == "3x3" and args.solver != "rubik":
@@ -56,23 +73,7 @@ async def _run(args: argparse.Namespace) -> int:
         raise SystemExit("2x2 benchmark requires --solver table")
     tasks = benchmark.tasks[: args.limit] if args.limit else benchmark.tasks
     solver = _load_solver(args)
-    defaults = (
-        (100, 150, 1_000_000, 900.0)
-        if benchmark.cube == "3x3"
-        else (30, 50, 300_000, 300.0)
-    )
-    budget = Budget(
-        max_moves=args.max_moves if args.max_moves is not None else defaults[0],
-        max_tool_calls=(
-            args.max_tool_calls
-            if args.max_tool_calls is not None
-            else defaults[1]
-        ),
-        max_tokens=args.max_tokens if args.max_tokens is not None else defaults[2],
-        max_seconds=(
-            args.max_seconds if args.max_seconds is not None else defaults[3]
-        ),
-    )
+    budget = _budget_from_args(args, benchmark.cube)
     shared_provider: ProviderAdapter | None = None
     adapter_to_close = None
     if args.provider == "openai":
@@ -112,6 +113,8 @@ async def _run(args: argparse.Namespace) -> int:
     report = aggregate_report(benchmark, benchmark.tasks, results)
     report["provider"] = args.provider
     report["model"] = args.model
+    report["solver"] = "off"  # CLI 不提供 assist，显式标记口径
+    report["skill"] = "none"  # CLI 不提供 skill pack，显式标记口径
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
@@ -152,6 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-tool-calls", type=int, default=None)
     run.add_argument("--max-tokens", type=int, default=None)
     run.add_argument("--max-seconds", type=float, default=None)
+    run.add_argument("--turn-timeout", type=float, default=None)
 
     report = sub.add_parser("report", help="print a saved report summary")
     report.add_argument("--report", required=True)

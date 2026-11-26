@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT,
   finished_at TEXT,
   task_keys_json TEXT,
-  require_plan INTEGER NOT NULL DEFAULT 0
+  require_plan INTEGER NOT NULL DEFAULT 0,
+  solver TEXT NOT NULL DEFAULT 'off',
+  skill TEXT NOT NULL DEFAULT 'none'
 );
 
 CREATE TABLE IF NOT EXISTS episodes (
@@ -82,7 +84,9 @@ CREATE TABLE IF NOT EXISTS episodes (
   error TEXT,
   started_at TEXT,
   finished_at TEXT,
-  plan_json TEXT
+  plan_json TEXT,
+  solver TEXT NOT NULL DEFAULT 'off',
+  skill TEXT NOT NULL DEFAULT 'none'
 );
 
 CREATE TABLE IF NOT EXISTS steps (
@@ -147,6 +151,16 @@ class Database:
                     "ALTER TABLE runs ADD COLUMN "
                     "require_plan INTEGER NOT NULL DEFAULT 0"
                 )
+            if "solver" not in run_columns:
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN "
+                    "solver TEXT NOT NULL DEFAULT 'off'"
+                )
+            if "skill" not in run_columns:
+                conn.execute(
+                    "ALTER TABLE runs ADD COLUMN "
+                    "skill TEXT NOT NULL DEFAULT 'none'"
+                )
             episode_columns = {
                 row["name"]
                 for row in conn.execute("PRAGMA table_info(episodes)")
@@ -154,6 +168,16 @@ class Database:
             if "plan_json" not in episode_columns:
                 conn.execute(
                     "ALTER TABLE episodes ADD COLUMN plan_json TEXT"
+                )
+            if "solver" not in episode_columns:
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN "
+                    "solver TEXT NOT NULL DEFAULT 'off'"
+                )
+            if "skill" not in episode_columns:
+                conn.execute(
+                    "ALTER TABLE episodes ADD COLUMN "
+                    "skill TEXT NOT NULL DEFAULT 'none'"
                 )
             conn.commit()
         finally:

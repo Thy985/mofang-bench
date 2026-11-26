@@ -28,6 +28,8 @@ def create_run(
     budget: dict[str, Any],
     task_keys: list[str] | None = None,
     require_plan: bool = False,
+    solver: str = "off",
+    skill: str = "none",
 ) -> str:
     run_id = uuid.uuid4().hex
     with db.transaction() as conn:
@@ -37,8 +39,8 @@ def create_run(
               (id, provider_id, benchmark_id, tool_mode, prompt_version,
                params_json, budget_json, status, totals_json, error,
                created_at, started_at, finished_at, task_keys_json,
-               require_plan)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               require_plan, solver, skill)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 run_id,
@@ -56,6 +58,8 @@ def create_run(
                 None,
                 _dump(task_keys) if task_keys is not None else None,
                 int(require_plan),
+                solver,
+                skill,
             ),
         )
     return run_id
@@ -123,6 +127,8 @@ def _run_dict(row: Any) -> dict[str, Any]:
             else None
         ),
         "require_plan": bool(row["require_plan"]),
+        "solver": row["solver"],
+        "skill": row["skill"],
         "created_at": row["created_at"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
@@ -156,6 +162,8 @@ def create_episode(
     task_row_id: str,
     reference_length: int,
     started_at: str,
+    solver: str = "off",
+    skill: str = "none",
 ) -> str:
     episode_id = uuid.uuid4().hex
     with db.transaction() as conn:
@@ -163,8 +171,8 @@ def create_episode(
             """
             INSERT INTO episodes
               (id, run_id, task_id, status, solved, moves_used, reference_length,
-               final_state_json, started_at)
-            VALUES (?,?,?,?,0,0,?,?,?)
+               final_state_json, started_at, solver, skill)
+            VALUES (?,?,?,?,0,0,?,?,?,?,?)
             """,
             (
                 episode_id,
@@ -174,6 +182,8 @@ def create_episode(
                 reference_length,
                 "{}",
                 started_at,
+                solver,
+                skill,
             ),
         )
     return episode_id
@@ -247,6 +257,36 @@ def add_steps(db: Database, episode_id: str, steps: list[StepRecord]) -> None:
         )
 
 
+def update_episode_progress(
+    db: Database,
+    episode_id: str,
+    *,
+    moves_used: int,
+    tokens_in: int,
+    tokens_out: int,
+    latency_ms: int,
+    final_state: dict[str, Any],
+) -> None:
+    """逐轮更新 episode 计数；进程中途消失时 DB 仍能反映已完成轮次。"""
+    with db.transaction() as conn:
+        conn.execute(
+            """
+            UPDATE episodes SET
+              moves_used = ?, tokens_in = ?, tokens_out = ?,
+              latency_ms = ?, final_state_json = ?
+            WHERE id = ?
+            """,
+            (
+                moves_used,
+                tokens_in,
+                tokens_out,
+                latency_ms,
+                _dump(final_state),
+                episode_id,
+            ),
+        )
+
+
 def _episode_dict(row: Any) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -269,6 +309,8 @@ def _episode_dict(row: Any) -> dict[str, Any]:
         "failure_code": row["failure_code"],
         "error": row["error"],
         "plan": json.loads(row["plan_json"]) if row["plan_json"] else None,
+        "solver": row["solver"],
+        "skill": row["skill"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
     }

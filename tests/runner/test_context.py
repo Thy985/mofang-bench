@@ -17,6 +17,8 @@ def test_system_prompt_covers_required_guidance() -> None:
         "apply_moves",
         "get_state",
         "check_solved",
+        "每轮最多执行 5 个工具调用",
+        "too_many_tool_calls",
         "预算",
         "外部求解器",
         "同一状态",
@@ -93,6 +95,31 @@ def test_keeps_only_recent_turns() -> None:
     assert "a3" in contents
     assert "a4" in contents
     assert "a0" not in contents
+
+
+def test_skill_pack_injected_only_when_enabled() -> None:
+    from mofang.runner.skills import LBL_PACK, ORTEGA_PACK
+
+    plain = system_prompt()
+    # none 路径必须逐字保持原 prompt：pack 只在末尾追加，不重排任何既有内容
+    assert plain == system_prompt(skill_pack=None)
+    for needle in ("Ortega", "PBL", "OLL", "入门分层法"):
+        assert needle not in plain
+    with_pack = system_prompt(skill_pack=ORTEGA_PACK)
+    assert ORTEGA_PACK in with_pack
+    assert with_pack.startswith(plain)
+    assert ORTEGA_PACK not in system_prompt(skill_pack=LBL_PACK)
+    assert LBL_PACK in system_prompt(skill_pack=LBL_PACK)
+
+
+def test_solver_assist_prompt_only_added_when_enabled() -> None:
+    off = system_prompt()
+    assist = system_prompt(solver_assist=True)
+    assert "solve()" not in off
+    assert "外部求解器" in off
+    assert "solve()" in assist
+    assert "apply_moves" in assist
+    assert "不会替你执行" in assist
 
 
 def test_move_history_in_state_message() -> None:

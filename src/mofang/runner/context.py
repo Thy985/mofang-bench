@@ -14,11 +14,28 @@ class TurnRecord:
 PROMPT_VERSION = "v2"
 
 
-def system_prompt(require_plan: bool = False) -> str:
+def system_prompt(
+    require_plan: bool = False,
+    *,
+    solver_assist: bool = False,
+    skill_pack: str | None = None,
+) -> str:
+    if solver_assist:
+        rules = (
+            "你只能通过工具操作魔方，不能直接修改状态。"
+            "可以使用 solve 工具获取建议走法，但 solve 不会替你执行，"
+            "拿到走法后仍须自己调用 apply_moves（批量工具不可用时用 turn）执行。"
+            "不要凭记忆猜测。\n\n"
+        )
+    else:
+        rules = (
+            "你只能通过工具操作魔方，不能直接修改状态，"
+            "也不要使用外部求解器或凭记忆猜测。\n\n"
+        )
     text = (
         "你是被评测的魔方操作者。目标是把魔方还原到六面同色。"
-        "你只能通过工具操作魔方，不能直接修改状态，也不要使用外部求解器或凭记忆猜测。\n\n"
-        "状态格式：工具返回 JSON，形如 "
+        + rules
+        + "状态格式：工具返回 JSON，形如 "
         '{"cube":"2x2","faces":{"U":[[...]],...}}。'
         "faces 的键为 U R F D L B；每个面是矩阵，行从上到下、列从左到右"
         "（从该面外侧看）；颜色为 white/yellow/green/blue/red/orange。\n\n"
@@ -29,6 +46,15 @@ def system_prompt(require_plan: bool = False) -> str:
         "- apply_moves(moves)：原子执行一串走法，任一非法则整批不生效；单次最多 30 步。\n"
         "- get_state()：读取当前局面、已用步数与剩余预算。\n"
         "- check_solved()：检查是否已还原。\n"
+        + (
+            "- solve()：返回当前局面的建议走法（标准记法）；它不改变魔方状态，"
+            "拿到后必须自己调用 apply_moves（批量工具不可用时用 turn）执行；"
+            "失败或不可用会返回 ok=false。\n"
+            if solver_assist
+            else ""
+        )
+        + "- 每轮最多执行 5 个工具调用；第 6 个及以后会收到 too_many_tool_calls，"
+        "且不会执行。需要连续走多步时，请优先把走法放进 apply_moves。\n"
         "每次工具调用都会返回最新状态；以工具结果为准，不要凭记忆推断。"
         "调用示例：turn {\"face\":\"R\",\"amount\":3} 等价于 R'。\n\n"
         "预算：步数与工具调用次数有限，超限会立即结束本局。已还原时停止调用工具。"
@@ -41,6 +67,13 @@ def system_prompt(require_plan: bool = False) -> str:
             "与分阶段计划（phases，每阶段含 name，可选 approach）。"
             "之后按阶段推进；如需调整可再次调用 submit_plan（最多 3 次修订）。"
             "计划不会替你执行任何操作，操作仍只能通过工具完成。"
+        )
+    if skill_pack:
+        # skill 模式：方法 pack 静态追加在 system prompt 末尾；
+        # none 时完全走上面的原文，不改动任何既有措辞。
+        text += (
+            "\n\n请严格按下面的方法分阶段推进：每完成一个阶段先用 get_state "
+            "核对完成判据，确认后再进入下一阶段。\n\n" + skill_pack
         )
     return text
 

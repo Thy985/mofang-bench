@@ -24,8 +24,9 @@ from ..store.runs import (
     get_run,
     set_episode_plan,
     set_run_status,
+    update_episode_progress,
 )
-from .factory import budget_for, model_params_for
+from .factory import budget_for, model_params_for, skill_budget_warning
 
 ProviderFactory = Callable[[ProviderRecord], ProviderAdapter]
 SolverFactory = Callable[[str], ReferenceSolver]
@@ -119,6 +120,8 @@ class RunService:
                         task_row_id=task_row,
                         reference_length=task.reference_length,
                         started_at=_now(),
+                        solver=run.get("solver", "off"),
+                        skill=run.get("skill", "none"),
                     )
                     self.events.publish(
                         run_id,
@@ -156,10 +159,29 @@ class RunService:
                         params=params,
                         tool_mode=run["tool_mode"],
                         require_plan=bool(run.get("require_plan")),
+                        solver_mode=run.get("solver", "off"),
+                        skill=run.get("skill", "none"),
                     )
-                    result = await runner.run(task, emit=emit, cancel=cancel)
+                    def persist_turn(payload: dict[str, Any]) -> None:
+                        # 每轮结束即落 steps 与进度，进程被强杀也保留前缀。
+                        add_steps(self.db, episode_id, payload["steps"])
+                        update_episode_progress(
+                            self.db,
+                            episode_id,
+                            moves_used=payload["moves_used"],
+                            tokens_in=payload["tokens_in"],
+                            tokens_out=payload["tokens_out"],
+                            latency_ms=payload["latency_ms"],
+                            final_state=payload["final_state"],
+                        )
+
+                    result = await runner.run(
+                        task,
+                        emit=emit,
+                        cancel=cancel,
+                        on_turn=persist_turn,
+                    )
                     finish_episode(self.db, episode_id, result)
-                    add_steps(self.db, episode_id, result.steps)
                     results.append(result)
                     executed_tasks.append(task)
                     self.events.publish(
@@ -179,6 +201,16 @@ class RunService:
                 if results
                 else None
             )
+            if totals is not None:
+                # solver / skill 口径随报告固化：不同组合的 solved 不能混池。
+                totals["solver"] = run.get("solver", "off")
+                skill = run.get("skill", "none")
+                totals["skill"] = skill
+                warning = skill_budget_warning(
+                    skill, int(run["budget"].get("max_moves", 0))
+                )
+                if warning:
+                    totals["budget_warning"] = warning
             status = "cancelled" if cancel.is_set() else "finished"
             set_run_status(
                 self.db, run_id, status, totals=totals, finished=True

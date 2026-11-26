@@ -7,7 +7,8 @@ from dataclasses import asdict
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
-from ...service.factory import budget_for
+from ...runner.skills import cube_mismatch_error
+from ...service.factory import budget_for, skill_budget_warning
 from ...store.benchmarks import get_benchmark
 from ...store.providers import get_provider
 from ...store.runs import (
@@ -54,6 +55,15 @@ async def start(payload: RunCreate, request: Request) -> dict:
             raise HTTPException(
                 400, f"task_keys 不属于该题集: {', '.join(invalid[:5])}"
             )
+    mismatch = cube_mismatch_error(payload.skill, benchmark.cube)
+    if mismatch:
+        raise HTTPException(400, mismatch)
+    if payload.skill != "none" and payload.solver == "assist":
+        raise HTTPException(
+            400,
+            "skill 与 solver=assist 首版互斥："
+            "请把 solver 设为 off，或把 skill 设为 none 后再启动。",
+        )
     providers = []
     for provider_id in provider_ids:
         provider = get_provider(db, provider_id)
@@ -61,7 +71,9 @@ async def start(payload: RunCreate, request: Request) -> dict:
             raise HTTPException(404, f"provider not found: {provider_id}")
         providers.append(provider)
     try:
-        budget = asdict(budget_for(benchmark.cube, payload.budget))
+        budget = asdict(
+            budget_for(benchmark.cube, payload.budget, skill=payload.skill)
+        )
     except TypeError as exc:
         raise HTTPException(400, f"invalid budget: {exc}") from exc
     created = []
@@ -77,6 +89,8 @@ async def start(payload: RunCreate, request: Request) -> dict:
             budget=budget,
             task_keys=task_keys,
             require_plan=payload.require_plan,
+            solver=payload.solver,
+            skill=payload.skill,
         )
         request.app.state.service.start(run_id)
         created.append({"id": run_id, "provider_id": provider.id})
@@ -221,13 +235,23 @@ def report(run_id: str, request: Request) -> dict:
         },
         "by_bin": {},
         "episodes": [],
+        "solver": run.get("solver", "off"),
+        "skill": run.get("skill", "none"),
     }
+    if run.get("skill", "none") != "none":
+        warning = skill_budget_warning(
+            run["skill"], int(run["budget"].get("max_moves", 0))
+        )
+        if warning:
+            totals["budget_warning"] = warning
     payload = dict(totals)
     payload.update(
         {
             "run_id": run_id,
             "provider_id": run["provider_id"],
             "benchmark_id": run["benchmark_id"],
+            "solver": run.get("solver", "off"),
+            "skill": run.get("skill", "none"),
             "status": run["status"],
             "started_at": run["started_at"],
             "finished_at": run["finished_at"],
@@ -248,9 +272,10 @@ def export(run_id: str, request: Request, format: str = "csv") -> Response:
         for item in get_run_episodes(db, run_id)
     ]
     columns = [
-        "task_id", "status", "solved", "moves_used", "reference_length",
-        "efficiency", "progress_ratio", "protocol_errors", "tokens_in",
-        "tokens_out", "latency_ms", "failure_code",
+        "task_id", "solver", "skill", "status", "solved", "moves_used",
+        "reference_length", "efficiency", "progress_ratio",
+        "protocol_errors", "tokens_in", "tokens_out", "latency_ms",
+        "failure_code",
     ]
     rows = [{**item, "task_id": item["task_key"]} for item in episodes]
     if format == "csv":
